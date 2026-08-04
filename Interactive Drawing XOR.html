@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<!--
+See: https://openprocessing.org/@u594485/2922410
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Interactive Drawing XOR</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.0/p5.min.js"></script>
+</head>
+<body>
+    <script>
+/*
+Author: qp91mn64
+
+Interactive drawing with (x ^ y) & bitmask and complementary patterns, binary images
+
+Left/Right click to fill an area with different patterns; press `s` to save an image; press `r` to reset
+
+Similar to my previous Processing sketch c_XOR_3_I_C:
+https://github.com/qp91mn64/sketches_checkerboard/blob/main/interactive_drawing/c_XOR_3_I_C
+
+The main difference: no data saved as a file, and no classes used.
+*/
+let bitmask = 0;
+let width1 = 512;
+let height1 = 512;
+let rows = 8;
+let cols = 8;
+let areaWidth, areaHeight;
+let dataMax, dataMin;
+let dpr; // devicePixelRatio
+let cvs;
+let isSaved = false; // Avoid saving duplicate images if drawings are not changed
+let r = false;
+let grid = [];
+function setup() {
+	// Less pixels for faster rendering if devicePixelRatio > 1
+	// Note: use pixelDensity() ahead the hack to let it take effect
+	pixelDensity(1);
+	/*
+   A hack suggested from AI
+   Draw more pixels with each smaller if devicePixelRatio > 1
+
+   The purpose is to fix inconsistent pixel size without zooming in,
+   causing what on canvas different from image saved,
+   without setting screen scaling ratio to 100% before running the sketch,
+   if cvs.style("image-rendering", "pixelated") is applied to draw sharp details
+   
+   Warning: don't try this if sharp details are not so important or you know other ways!
+   
+   Known side effects according to my tests, if devicePixelRatio > 1:
+   - Blank sides when saving the whole canvas as an image;
+       Solution: only save what are actually drawn as images, generally the left-upper width1 × height1 part.
+   - Blank sides when capturing a cover for your sketch;
+       Solution: now it is still needed to set screen scaling ratio to 100% before this,
+	   except that your sketch is a fork and the original cover is not changed.
+   - Actual coordinate = pixel ruler on OpenProcessing × devicePixelRatio;
+   - pixelDensity(1); doesn't work after the hack.
+       Solution: always use this before the hack, which is still effective.
+   - Dragging the mouse pixel by pixel skips some values
+   
+   Only tested on Windows 11
+   */
+	dpr =  window.devicePixelRatio || 1;
+	//console.log("devicePixelRatio:", dpr);
+	cvs = createCanvas(width1 * dpr | 0, height1 * dpr | 0);
+	cvs.style("width", `${width1}px`);
+	cvs.style("height", `${height1}px`);
+	// Nearest neighbor interpolation, so no blurry details when zooming in
+	// Side effect: pixels are rendered with different size when non-integer zooming in
+	cvs.style("image-rendering", "pixelated");
+	areaWidth = width1 / cols | 0;
+	areaHeight = height1 / rows | 0;
+	noStroke();
+	// Calculate how many kinds of patterns can be drawn
+	let a = 1;
+	while (a < areaWidth || a < areaHeight) {
+		a <<= 1; // multiply by 2
+	}
+	dataMax = a - 1;
+	dataMin = ~dataMax; // - dataMax - 1
+	// Initialize the grid with all zero
+	for (let i = 0; i < rows * cols; i++) {
+		grid.push(0);
+	}
+	// Initialize the canvas
+	loadPixels();
+	drawAll();
+	updatePixels();
+}
+function draw() {
+	if (r) {
+		// for performance, update pixels directly
+		loadPixels();
+		drawAll();
+		updatePixels();
+		r = !r;
+	}
+}
+function mousePressed() {
+	let x = Math.floor(mouseX / areaWidth);
+	let y = Math.floor(mouseY / areaHeight);
+	// Limit the range of coordinates
+	// Blank sides are unclickable if appeared
+	if (x >= cols || x < 0 || y >= rows || y < 0) {
+		return;
+	}
+	if (mouseButton == LEFT) {
+		let d = grid[y * cols + x];
+		if (d < dataMax) {
+			grid[y * cols + x] += 1;
+			loadPixels();
+			drawPattern(x, y);
+			updatePixels();
+			isSaved = false;
+		}
+	} else if (mouseButton == RIGHT) {
+		let d = grid[y * cols + x];
+		if (d > dataMin) {
+			grid[y * cols + x] -= 1;
+			loadPixels();
+			drawPattern(x, y);
+			updatePixels();
+			isSaved = false;
+		}
+	}
+}
+function keyPressed() {
+	if (key == "s" || key == "S") {
+		if (!isSaved) {
+			save1();
+			isSaved = true;
+		}
+	} else if (key == "r" || key == "R") {
+		reset1();
+		r = true;
+	}
+}
+function save1() {
+	// Saving an image of what are actually drawn instead of the whole canvas to exclude blank sides
+	let img1 = get(0, 0, width1, height1);
+	let a1 = Math.random() * 10000 | 0;
+	let stamp = year() + nf(month(), 2) + nf(day(), 2) + nf(hour(), 2) + nf(minute(), 2) + nf(second(), 2);
+   stamp += `_${millis()}_${frameCount}`;
+	let s = `Interactive_Drawing_XOR grid_${a1}_s${stamp}`;
+	let imgName = s + ".png";
+	save(img1, imgName);
+}
+function reset1() {
+	let data1 = grid.slice();
+	for (let i = 0; i < rows * cols; i++) {
+		grid[i] = 0;
+	}
+	// Avoid saving the same image repeatedly when pressing `r`, `s` alternately
+	for (let i = 0; i < rows * cols; i++) {
+		if (!isSaved) {
+			break;
+		}
+		if (data1[i] != grid[i]) {
+			isSaved = false;
+			break;
+		}
+	}
+}
+function drawAll() {
+	for (let x = 0; x < cols; x++) {
+		for (let y = 0; y < rows; y++) {
+			drawPattern(x, y);
+		}
+	}
+}
+function drawPattern(x, y) {
+   /*
+   a increase from 0 to dataMax, decrease from -1 to dataMin
+   patterns drawn share the same structure with complementary color
+   
+   a                 <->  ~a
+   0                 <->  -1
+   increase by 1     <->  decrease by 1
+   dataMax           <->  dataMin
+   black             <->  white
+   original pattern  <->  complementary pattern
+   */
+	let a = grid[y * cols + x];
+	if (a >= 0) {
+		drawPattern1(x * areaWidth, y * areaHeight, areaWidth, areaHeight, a);
+	} else {
+		drawPattern1_C(x * areaWidth, y * areaHeight, areaWidth, areaHeight, ~a);
+	}
+}
+function drawPattern1(x0, y0, areaWidth, areaHeight, bitmask) {
+	let colorZero = 0; // black
+	let colorOne = 0xffffff; // white
+	let cellWidth = 1;
+	let cellHeight = 1;
+	let d = pixelDensity(); // XXX: the pixel density may be > 1
+	let W = Math.floor((areaWidth - 1) / cellWidth) + 1;
+	let H = Math.floor((areaHeight - 1) / cellHeight) + 1;
+	let pixelX0 = x0 * d;
+	let pixelY0 = y0 * d;
+	let maxPixelRow = areaHeight * d - 1;
+	let maxPixelCol = areaWidth * d - 1;
+	let width2 = width1 * d;
+	let color1;
+	let dx;
+	let dy;
+	let dx1;
+	let dy1;
+	let result;
+	// cells -> areas
+	for (let i = 0; i < W * H; i++) {
+		dx = i % W;
+		dy = Math.floor(i / W);
+		result = (dx ^ dy) & bitmask; // bitwise XOR, then bitmasked
+		if (result != 0) {
+			color1 = colorOne;
+		} else {
+			color1 = colorZero;
+		}
+		// pixels -> cells
+		let pixelRows = cellHeight * d;
+		let pixelCols = cellWidth * d;
+		for (let j = 0; j < pixelRows * pixelCols; j++) {
+			dx1 = j % pixelCols;
+			dy1 = j / pixelCols | 0;
+			let whichPixel = ((pixelY0 + Math.min(dy * pixelRows + dy1, maxPixelRow)) * width2 + pixelX0 + Math.min(dx * pixelCols + dx1, maxPixelCol)) * 4;
+			pixels[whichPixel] = (color1 >> 16) & 255; // red
+			pixels[whichPixel + 1] = (color1 >> 8) & 255; // green
+			pixels[whichPixel + 2] = color1 & 255; // blue
+			pixels[whichPixel + 3] = 255; // alpha
+		}
+	}
+}
+function drawPattern1_C(x0, y0, areaWidth, areaHeight, bitmask) {
+	let colorZero = 0xffffff; // white
+	let colorOne = 0; // black
+	let cellWidth = 1;
+	let cellHeight = 1;
+	let d = pixelDensity(); // XXX: the pixel density may be > 1
+	let W = Math.floor((areaWidth - 1) / cellWidth) + 1;
+	let H = Math.floor((areaHeight - 1) / cellHeight) + 1;
+	let pixelX0 = x0 * d;
+	let pixelY0 = y0 * d;
+	let maxPixelRow = areaHeight * d - 1;
+	let maxPixelCol = areaWidth * d - 1;
+	let width2 = (width1 | 0) * d;
+	let color1;
+	let dx;
+	let dy;
+	let dx1;
+	let dy1;
+	let result;
+	// cells -> areas
+	for (let i = 0; i < W * H; i++) {
+		dx = i % W;
+		dy = i / W | 0;
+		result = (dx ^ dy) & bitmask; // bitwise XOR, then bitmasked
+		if (result != 0) {
+			color1 = colorOne;
+		} else {
+			color1 = colorZero;
+		}
+		// pixels -> cells
+		let pixelRows = cellHeight * d;
+		let pixelCols = cellWidth * d;
+		for (let j = 0; j < pixelRows * pixelCols; j++) {
+			dx1 = j % pixelCols;
+			dy1 = j / pixelCols | 0;
+			let whichPixel = ((pixelY0 + Math.min(dy * pixelRows + dy1, maxPixelRow)) * width2 + pixelX0 + Math.min(dx * pixelCols + dx1, maxPixelCol)) * 4;
+			pixels[whichPixel] = (color1 >> 16) & 255; // red
+			pixels[whichPixel + 1] = (color1 >> 8) & 255; // green
+			pixels[whichPixel + 2] = color1 & 255; // blue
+			pixels[whichPixel + 3] = 255; // alpha
+		}
+	}
+}
+    </script>
+</body>
