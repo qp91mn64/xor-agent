@@ -16,6 +16,7 @@
 python -m pip install -r requirements.txt   # 安装依赖（openai/dotenv/numpy/pillow）
 # 复制 env.example 为 .env，填入 DEEPSEEK_API_KEY
 python agent.py --seed 5 --detailed         # 运行；控制台会打印可视化网址
+# 可选：--seed-index 0-63 指定种子区域编号（默认 0，区域0）；--port 固定端口；--rounds/--clicks 调整终止上限
 ```
 
 打开浏览器访问打印的网址，可实时看到 AI 每次"点击"后的画布、参数热力图、黑白平衡度演化与 AI 思考（决策可视化）。
@@ -32,7 +33,6 @@ test-agent-2/
 ├── logger.py               # 日志（复用 test-agent，MIT）
 ├── selftest.py             # 离线自测（不依赖 API）
 ├── web/index.html          # 实时决策可视化页（原生 JS，轮询 state.json）
-├── test-agent-src/         # 上游参考（发布时删除，改用上游链接 minimal-agent）
 ├── Interactive Drawing XOR.html  # 原始画布作品
 ├── requirements.txt / env.example / .gitignore
 └── output/                 # 运行产物：state.json + step_*.png（已 gitignore）

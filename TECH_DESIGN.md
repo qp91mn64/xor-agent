@@ -26,10 +26,10 @@
 | 交互粒度 | 逐格点击（set_region/evaluate） | 最忠实于"模拟点击"；与 test-agent 的 move/view 同构，主循环可整体复用 |
 | 评价闭环 | 代码指标迭代（v1 单指标） | 纯文本闭环，无视觉依赖，最贴 agent 本质 |
 | 指标配置 | 黑白平衡度 1 个 | 先跑通闭环，指标库是后续扩展点 |
-| 种子约束 | 保留（用户给 1 个初始值，AI 填其余） | 忠于原始问题 |
+| 种子约束 | 保留（用户给 1 个初始值，AI 填其余；区域编号 `--seed-index` 0-63，默认 0） | 忠于原始问题 |
 | 决策可视化 | 实时网页（stdlib http.server + 原生 JS 轮询） | 零新框架、零 CDN |
 | 技术栈 | Python | 复用 test-agent 的 agent.py/logger.py/tools.py 模式 |
-| 运行代码位置 | 根目录（test-agent-src 仅作上游参考） | 导入/运行简单，来源边界清晰，依赖记账不混淆 |
+| 运行代码位置 | 根目录（上游参考 test-agent-src 已删除，改用上游链接 [minimal-agent](https://github.com/qp91mn64/minimal-agent)） | 导入/运行简单，来源边界清晰，依赖记账不混淆 |
 
 ## 二、整体架构
 
@@ -74,13 +74,14 @@ web/index.html（画布 / 热力图 / 指标折线 / 点击轨迹）
 
 主循环：AI 调用工具 → 执行 → 结果文本回填 messages → 循环，直到 AI 不再调用工具或触达终止条件。每次工具调用后写一份 state.json + PNG 快照。
 
-终止条件（参数可调，`--rounds` / `--clicks`）：
-- 最多 N 次循环（一次循环 = 一次 API 请求，默认 30）
-- 最多 M 次 set_region（默认 64）
-- 连续 3 次无效点击（越界 / 超范围 / 种子区域）
+终止条件（仅前两条可调：`--rounds` / `--clicks`，其余为代码常量）：
+- 最多 N 次循环（一次循环 = 一次 API 请求，默认 30，`--rounds`）
+- 最多 M 次 set_region（默认 64，`--clicks`）
+- 连续 3 次无效点击（越界 / 超范围 / 种子区域；常量 MAX_INVALID）
 - AI 直接输出文字不再调用工具
+- 工具调用总数上限 96 次（含 view_region / evaluate；常量 MAX_TOOL_CALLS）
 
-成功判定不看模型输出，看画布状态：已点击的非种子区域数 == 63 即成功（覆盖率），并记录最终指标。
+成功判定不看模型输出，看画布状态：已点击的非种子区域数 == 63 即成功（覆盖率），并记录最终指标。注意口径：成功判定按"点击过"（去重区域数），而 evaluate 的"已设定"按当前值 ≠ 0 统计；某区被点击后改回 0，仍计成功但 evaluate 会显示未设定。
 
 ### 图案语义字典
 
@@ -102,7 +103,7 @@ web/index.html（画布 / 热力图 / 指标折线 / 点击轨迹）
 **服务端（agent.py，标准库实现）**
 - `start_server()`：`ThreadingHTTPServer` + `SimpleHTTPRequestHandler`（`directory=项目根目录`），固定绑定 `127.0.0.1`，端口默认 0（由系统随机分配空闲端口），`--port` 可指定固定值；后台守护线程运行。
 - 路径映射：`/` 或 `/index.html` 改写为 `/web/index.html`；其余按项目根目录静态提供，所以 `/output/step_003.png`、`/output/state.json` 可直接 fetch。
-- `xor_world.snapshot(step)`：**每次工具调用后**渲染 512×512 PNG → 写 `output/step_NNN.png`；更新 `state["image"]`（URL 路径）；指标追加进 `metric_history`；写 `output/state.json`（含 grid、clicks、reasoning、status、final_reason）。启动时先做一次 step 0 快照。
+- `xor_world.snapshot(step)`：**每次工具调用后**渲染 512×512 PNG → 写 `output/step_NNN.png`；更新 `state["image"]`（URL 路径）；指标追加进 `metric_history`；写 `output/state.json`（含 grid、seed_index、seed_value、clicks（每条含 reasoning）、metric_history、status、final_reason、image）。启动时先做一次 step 0 快照。
 
 **客户端（web/index.html，原生 JS）**
 - `setInterval(refresh, 1000)` 每 1 秒 `fetch('/output/state.json', {cache:'no-store'})`，拿到状态后整体重渲染。
@@ -114,9 +115,9 @@ web/index.html（画布 / 热力图 / 指标折线 / 点击轨迹）
 
 ## 四、实验设计与扩展
 
-### 基线对照
+### 基线对照（未实现，计划中）
 
-回答"AI 是否胜过运气"：内置 random 策略，随机 set_region 同样的点击次数，跑同样的指标。比较最终指标，得出"纯文本 AI 在这个空间里是否超越了随机"——这是"探索 AI 创造力边界"的可量化答案。
+回答"AI 是否胜过运气"：计划内置 random 策略，随机 set_region 同样的点击次数，跑同样的指标。比较最终指标，得出"纯文本 AI 在这个空间里是否超越了随机"——这是"探索 AI 创造力边界"的可量化答案。代码尚未实现，作为后续实验项。
 
 ### 后续扩展点
 
