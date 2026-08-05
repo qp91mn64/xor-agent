@@ -47,10 +47,10 @@ TOOLS = [
 ]
 
 
-def execute_tool(name, arguments, reasoning=None):
-    """执行工具并返回结果文本；reasoning 为模型本轮思考，记录进点击轨迹"""
+def execute_tool(name, arguments, reasoning=None, round_id=None):
+    """执行工具并返回结果文本；reasoning 为模型本轮思考，round_id 为循环轮次，均记录进点击轨迹"""
     if name == "set_region":
-        return xor_world.set_region(arguments["index"], arguments["value"], reasoning)
+        return xor_world.set_region(arguments["index"], arguments["value"], reasoning, round_id)
     if name == "view_region":
         return xor_world.view_region(arguments["index"])
     if name == "evaluate":

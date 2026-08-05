@@ -16,8 +16,10 @@ import argparse
 import json
 import os
 import threading
+import time
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -39,6 +41,9 @@ MAX_LOOPS = 30          # 一次循环 = 一次 API 请求
 MAX_CLICKS = 64         # set_region 成功一次记一次
 MAX_TOOL_CALLS = 96     # 工具调用总数上限（含 view_region / evaluate）
 MAX_INVALID = 3         # 连续无效点击（越界/超范围/种子区域）
+
+# 实时思考中间文件：流式等待期间 web 轮询显示，本轮结束删除
+REASONING_LIVE = os.path.join("output", "reasoning_live.json")
 
 PATTERN_DICT = """图案语义（理解一个值会画出什么）：
 - 每区图案由 (dx^dy) & a 决定（dx,dy 为该区域内像素坐标 0..63）；白格 = (dx^dy)&a != 0 的像素。
@@ -77,7 +82,7 @@ def get_api_key():
 
 
 def assistant_message(msg):
-    """把 API 返回的 assistant 消息转成可回填到 messages 的字典"""
+    """把 API 返回的 assistant 消息转成可回填到 messages 的字典（兼容 SDK 对象与流式 SimpleNamespace）"""
     m = {"role": "assistant", "content": msg.content or ""}
     # 官方文档要求：思考模式下工具调用轮次必须回传 reasoning_content，否则 API 返回 400。
     # 2026-08-03 实测（deepseek-v4-flash 0731）未触发 400，保留回传作为防御。
@@ -85,8 +90,85 @@ def assistant_message(msg):
     if reasoning:
         m["reasoning_content"] = reasoning
     if msg.tool_calls:
-        m["tool_calls"] = [tc.model_dump() for tc in msg.tool_calls]
+        m["tool_calls"] = [
+            {
+                "id": tc.id,
+                "type": getattr(tc, "type", "function"),
+                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+            }
+            for tc in msg.tool_calls
+        ]
     return m
+
+
+def write_reasoning_live(round_id, reasoning):
+    """原子写 output/reasoning_live.json（web 轮询显示实时思考）；文件不存在时 web 隐藏该面板"""
+    try:
+        os.makedirs("output", exist_ok=True)
+        payload = json.dumps({"round": round_id, "reasoning": reasoning}, ensure_ascii=False)
+        tmp = REASONING_LIVE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(payload)
+        os.replace(tmp, REASONING_LIVE)
+    except OSError:
+        pass
+
+
+def clear_reasoning_live():
+    try:
+        os.remove(REASONING_LIVE)
+    except OSError:
+        pass
+
+
+def chat_stream(client, messages, round_id):
+    """流式调用并累积 delta（思考/正文/工具调用），返回 SimpleNamespace 形式的 msg。
+
+    思考增量实时打印到控制台，并写入 reasoning_live.json 供 web 轮询。
+    流式传输本身不改变 token 计费（仅传输方式不同），无额外成本。
+    """
+    stream = client.chat.completions.create(
+        model=MODEL, messages=messages, tools=tools.TOOLS, stream=True
+    )
+    content = ""
+    reasoning = ""
+    tool_acc = {}  # tool_call index -> {"id","name","arguments"}
+    for chunk in stream:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        if not delta:
+            continue
+        r = getattr(delta, "reasoning_content", None)
+        if r:
+            reasoning += r
+            print(r, end="", flush=True)
+            write_reasoning_live(round_id, reasoning)
+        if delta.content:
+            content += delta.content
+        if getattr(delta, "tool_calls", None):
+            for tc in delta.tool_calls:
+                acc = tool_acc.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
+                if tc.id:
+                    acc["id"] = tc.id
+                if tc.function:
+                    if tc.function.name:
+                        acc["name"] = tc.function.name
+                    if tc.function.arguments:
+                        acc["arguments"] += tc.function.arguments
+    print()  # 思考（若有）结束换行；无思考时也换行，避免与后续输出粘连
+    tool_calls = [
+        SimpleNamespace(
+            id=tool_acc[i]["id"], type="function",
+            function=SimpleNamespace(name=tool_acc[i]["name"], arguments=tool_acc[i]["arguments"]),
+        )
+        for i in sorted(tool_acc)
+    ]
+    return SimpleNamespace(
+        content=content or None,
+        reasoning_content=reasoning or None,
+        tool_calls=tool_calls or None,
+    )
 
 
 class _Handler(SimpleHTTPRequestHandler):
@@ -152,11 +234,12 @@ def main():
 
     for loops in range(1, args.rounds + 1):
         write_log(f"--- 第 {loops} 次循环 ---", log_file)
+        print(f"[请求模型 第{loops}次] ", end="", flush=True)
+        t0 = time.monotonic()
         try:
-            response = client.chat.completions.create(
-                model=MODEL, messages=messages, tools=tools.TOOLS
-            )
+            msg = chat_stream(client, messages, loops)
         except Exception as exc:
+            clear_reasoning_live()
             status = getattr(exc, "status_code", None)
             write_log(
                 f"API 请求失败（第 {loops} 次循环）: {type(exc).__name__} status_code={status}",
@@ -166,7 +249,7 @@ def main():
             if resp is not None:
                 write_log(f"响应体: {resp.text}", log_file)
             raise
-        msg = response.choices[0].message
+        write_log(f"本轮请求耗时 {time.monotonic() - t0:.1f}s", log_file)
         messages.append(assistant_message(msg))
         log_model_response(msg, log_file, detailed)
 
@@ -183,7 +266,7 @@ def main():
                 arguments = json.loads(tc.function.arguments)
             except json.JSONDecodeError:
                 arguments = {}
-            result = tools.execute_tool(name, arguments, reasoning=reasoning)
+            result = tools.execute_tool(name, arguments, reasoning=reasoning, round_id=loops)
             log_tool_call(name, tc.id, arguments, result, log_file)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
@@ -227,6 +310,7 @@ def main():
         log_file,
     )
     write_log(f"日志已保存: {log_file}，可视化 http://127.0.0.1:{port}/", log_file)
+    clear_reasoning_live()  # 运行结束，删除实时思考中间文件（web 面板随之隐藏）
     print(result_text)
 
 

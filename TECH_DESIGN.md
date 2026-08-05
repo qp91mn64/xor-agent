@@ -72,7 +72,7 @@ web/index.html（画布 / 热力图 / 指标折线 / 点击轨迹）
 | `view_region` | index | 查看区域当前值和图案描述 | view(局部) |
 | `evaluate` | 无 | 渲染整幅并返回指标与未设定区域数 | view(整体) |
 
-主循环：AI 调用工具 → 执行 → 结果文本回填 messages → 循环，直到 AI 不再调用工具或触达终止条件。每次工具调用后写一份 state.json + PNG 快照。
+主循环（流式）：AI 调用工具 → 执行 → 结果文本回填 messages → 循环，直到 AI 不再调用工具或触达终止条件。每次工具调用后写一份 state.json + PNG 快照。模型可能一次请求返回多个工具调用（批量并行，实测一轮 16~31 个，或者一轮填满 63 格），点击按轮次（round）记录，供可视化按轮分组。
 
 终止条件（仅前两条可调：`--rounds` / `--clicks`，其余为代码常量）：
 - 最多 N 次循环（一次循环 = 一次 API 请求，默认 30，`--rounds`）
@@ -94,7 +94,7 @@ web/index.html（画布 / 热力图 / 指标折线 / 点击轨迹）
 
 `黑白平衡度 = 1 - |黑像素占比 - 0.5| × 2`（渲染后数像素，精确）。
 
-**已知坑（诚实记录）**：单指标存在作弊解——全填 a=1（或其他单一位值，黑白各半）即满分。v1 目的不是求好作品，而是把"闭环+可视化"跑通。后续扩展：图案多样性、网格对称度、邻域渐变度、纹理密度，再谈审美。
+**已知坑（诚实记录）**：单指标存在作弊解——任一单一位值（1/2/4/8/16/32，黑白各半）即可满分。2026-08-05 实测证实：两轮运行均以 1.000 满分收尾，产出图案分别为"1,2,4,8,16,32 循环渐变"和"大片 a=1 + 单个 15"，视觉单调。v1 目的不是求好作品，而是把"闭环+可视化"跑通。后续扩展：图案多样性、网格对称度、邻域渐变度、纹理密度，再谈审美。
 
 ### 实时可视化
 
@@ -103,13 +103,14 @@ web/index.html（画布 / 热力图 / 指标折线 / 点击轨迹）
 **服务端（agent.py，标准库实现）**
 - `start_server()`：`ThreadingHTTPServer` + `SimpleHTTPRequestHandler`（`directory=项目根目录`），固定绑定 `127.0.0.1`，端口默认 0（由系统随机分配空闲端口），`--port` 可指定固定值；后台守护线程运行。
 - 路径映射：`/` 或 `/index.html` 改写为 `/web/index.html`；其余按项目根目录静态提供，所以 `/output/step_003.png`、`/output/state.json` 可直接 fetch。
-- `xor_world.snapshot(step)`：**每次工具调用后**渲染 512×512 PNG → 写 `output/step_NNN.png`；更新 `state["image"]`（URL 路径）；指标追加进 `metric_history`；写 `output/state.json`（含 grid、seed_index、seed_value、clicks（每条含 reasoning）、metric_history、status、final_reason、image）。启动时先做一次 step 0 快照。
+- `xor_world.snapshot(step)`：**每次工具调用后**渲染 512×512 PNG → 写 `output/step_NNN.png`；更新 `state["image"]`（URL 路径）；指标追加进 `metric_history`；写 `output/state.json`（含 grid、seed_index、seed_value、clicks（每条含 reasoning、round）、metric_history、status、final_reason、image）。启动时先做一次 step 0 快照。
+- 流式实时思考：API 调用用 `stream=True`，思考增量（reasoning_content）实时打印到控制台，并原子写 `output/reasoning_live.json`（`{round, reasoning}`）供 web 轮询；一轮结束后由下一轮覆盖，运行结束删除。流式仅改变传输方式，不改变 token 计费，无额外成本。
 
 **客户端（web/index.html，原生 JS）**
-- `setInterval(refresh, 1000)` 每 1 秒 `fetch('/output/state.json', {cache:'no-store'})`，拿到状态后整体重渲染。
-- 渲染四块：当前画布（`<img>` 指向 state.image，加 `?t=时间戳` 防缓存）；参数热力图（canvas 2D，值 -64..63 映射色相，低值红、高值蓝）；黑白平衡度折线（canvas 2D）；点击轨迹时间线（最新 30 条倒序，reasoning 经 `esc()` 转义防 HTML 注入）。
+- `setInterval(refresh, 1000)` 每 1 秒 `fetch('/output/state.json', {cache:'no-store'})`，拿到状态后整体重渲染；`refreshLive` 同频轮询 `/output/reasoning_live.json` 显示流式实时思考（文件不存在即隐藏面板）。
+- 渲染五块：当前画布（`<img>` 指向 state.image，加 `?t=时间戳` 防缓存）；参数热力图（canvas 2D，值 -64..63 映射色相，低值红、高值蓝）；黑白平衡度折线（canvas 2D）；点击轨迹时间线（按 round 分组、最新 15 组倒序，一组显示一次思考 + 该批格子，reasoning 经 `esc()` 转义防 HTML 注入）；实时思考面板（流式等待期间显示模型思考增量）。
 
-**为什么用"轮询文件"而不是实时推送**：主循环是同步的（一轮 = 一次 API 请求），每步落盘一次，与 1 秒轮询天然匹配，实现最简单。代价是刷新延迟 ≤1 秒，对观察 AI 的点击节奏足够。
+**为什么用"轮询文件"而不是实时推送**：主循环是同步的（一轮 = 一次 API 请求），每步落盘一次，与 1 秒轮询天然匹配，实现最简单。代价是刷新延迟 ≤1 秒，对观察 AI 的点击节奏足够。流式等待期间通过 `reasoning_live.json` 提供实时反馈——首次请求实测约 47 秒纯等待，无反馈会误以为卡死。
 
 **地址与端口（唯一约定）**：HTTP 服务固定绑定 `127.0.0.1`（本机回环地址；访问 URL 一律用 `127.0.0.1`，不用 `localhost` 字样），端口默认 0（由系统随机分配空闲端口），`--port` 可覆盖。控制台打印的访问地址格式固定为 `http://127.0.0.1:<port>/`。v1 仅支持本机浏览器访问，不绑 `0.0.0.0`、不做跨设备方案。
 

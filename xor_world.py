@@ -98,8 +98,12 @@ def save_png(canvas, path):
     Image.fromarray(canvas, mode="L").save(path)
 
 
-def set_region(index, value, reasoning=None):
-    """set_region 工具：为区域 index 设定参数值 value（模拟一次点击）"""
+def set_region(index, value, reasoning=None, round_id=None):
+    """set_region 工具：为区域 index 设定参数值 value（模拟一次点击）
+
+    reasoning：模型本轮思考（一轮一次，同一轮内所有点击共享，供可视化按轮分组）；
+    round_id：当前循环轮次（一轮 = 一次 API 请求），用于时间线分组。
+    """
     if not (0 <= index < ROWS * COLS):
         return f"Invalid: index {index} 超出范围 0-63"
     if not (DATA_MIN <= value <= DATA_MAX):
@@ -109,7 +113,8 @@ def set_region(index, value, reasoning=None):
     prev = state["grid"][index]
     state["grid"][index] = value
     state["clicks"].append({
-        "index": index, "value": value, "prev": prev, "reasoning": reasoning or "",
+        "index": index, "value": value, "prev": prev,
+        "reasoning": reasoning or "", "round": round_id,
     })
     return (f"区域 {index}（第{index // COLS}行第{index % COLS}列）已设为 {value}：{pattern_description(value)}"
             f"。原先为 {prev}：{pattern_description(prev)}")

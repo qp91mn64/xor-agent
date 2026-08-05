@@ -9,6 +9,58 @@ import xor_world
 import tools
 
 
+def test_stream_accumulation():
+    """流式累积逻辑离线验证：思考/正文/工具调用增量拼接（不依赖 API）"""
+    from types import SimpleNamespace
+
+    import agent
+
+    def mk_chunk(reasoning="", content="", tool_calls=None):
+        delta = SimpleNamespace(
+            reasoning_content=reasoning or None, content=content or None, tool_calls=tool_calls
+        )
+        return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+    def mk_tc(index, id_="", name="", args=""):
+        return SimpleNamespace(
+            index=index, id=id_ or None,
+            function=SimpleNamespace(name=name or None, arguments=args or None),
+        )
+
+    chunks = [
+        mk_chunk(reasoning="思考第"),
+        mk_chunk(reasoning="一段。"),
+        mk_chunk(content="输出"),
+        mk_chunk(tool_calls=[mk_tc(0, "call_1", "set_region", '{"index": 1, "value": 2')]),  # 首段不闭合
+        mk_chunk(tool_calls=[mk_tc(0, None, None, ', "round": 1}')]),  # arguments 增量拼接
+    ]
+
+    class FakeCompletions:
+        def create(self, model, messages, tools, stream):
+            return iter(chunks)
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    class FakeClient:
+        chat = FakeChat()
+
+    try:
+        msg = agent.chat_stream(FakeClient(), [], 1)
+        assert msg.reasoning_content == "思考第一段。", msg.reasoning_content
+        assert msg.content == "输出"
+        assert len(msg.tool_calls) == 1
+        tc = msg.tool_calls[0]
+        assert tc.id == "call_1" and tc.function.name == "set_region"
+        assert tc.function.arguments == '{"index": 1, "value": 2, "round": 1}'
+        m = agent.assistant_message(msg)
+        assert m["tool_calls"][0]["function"]["arguments"] == '{"index": 1, "value": 2, "round": 1}'
+        assert m.get("reasoning_content") == "思考第一段。"
+    finally:
+        agent.clear_reasoning_live()  # 清理测试期间写入的实时思考文件
+    print("流式累积 OK")
+
+
 def test_server():
     """HTTP 可视化服务冒烟测试：/ 映射到 index.html，/output/state.json 可达"""
     import time
@@ -87,7 +139,10 @@ def main():
     assert xor_world.coverage() >= 1  # 点击过区域 1
     print("coverage OK:", xor_world.coverage())
 
-    # 10. HTTP 可视化服务冒烟测试（需先有快照）
+    # 10. 流式累积（思考/正文/工具调用增量拼接）
+    test_stream_accumulation()
+
+    # 11. HTTP 可视化服务冒烟测试（需先有快照）
     test_server()
 
     print("\n全部自测通过 OK")

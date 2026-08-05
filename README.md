@@ -19,7 +19,7 @@ python agent.py --seed 5 --detailed         # 运行；控制台会打印可视�
 # 可选：--seed-index 0-63 指定种子区域编号（默认 0，区域0）；--port 固定端口；--rounds/--clicks 调整终止上限
 ```
 
-打开浏览器访问打印的网址，可实时看到 AI 每次"点击"后的画布、参数热力图、黑白平衡度演化与 AI 思考（决策可视化）。
+打开浏览器访问打印的网址，可实时看到 AI 每次"点击"后的画布、参数热力图、黑白平衡度演化与 AI 思考（决策可视化；等待模型响应时，控制台与网页实时显示思考过程）。
 
 ## 结构
 
@@ -33,6 +33,7 @@ test-agent-2/
 ├── logger.py               # 日志（复用 test-agent，MIT）
 ├── selftest.py             # 离线自测（不依赖 API）
 ├── web/index.html          # 实时决策可视化页（原生 JS，轮询 state.json）
+├── context-log/            # 排查/实测记录（一个主题一个文件）
 ├── Interactive Drawing XOR.html  # 原始画布作品
 ├── requirements.txt / env.example / .gitignore
 └── output/                 # 运行产物：state.json + step_*.png（已 gitignore）
