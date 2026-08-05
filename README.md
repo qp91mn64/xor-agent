@@ -8,14 +8,32 @@
 
 ## 状态
 
-设计已收敛并归档至 [设计文档](DESIGN.md)，代码实现尚未开始。
+设计见 [技术设计](TECH_DESIGN.md)，依赖与许可证见 [DEPENDENCIES.md](DEPENDENCIES.md)。核心已实现：Agent 主循环 + XOR 画布世界 + 实时决策可视化。
+
+## 快速开始
+
+```powershell
+python -m pip install -r requirements.txt   # 安装依赖（openai/dotenv/numpy/pillow）
+# 复制 env.example 为 .env，填入 DEEPSEEK_API_KEY
+python agent.py --seed 5 --detailed         # 运行；控制台会打印可视化网址
+```
+
+打开浏览器访问打印的网址，可实时看到 AI 每次"点击"后的画布、参数热力图、黑白平衡度演化与 AI 思考（决策可视化）。
 
 ## 结构
 
 ```
 test-agent-2/
-├── DESIGN.md                     # 设计文档（问题定义、方案、工具协议、指标）
-├── test-agent-src/               # 上游参考（发布时删除，改用上游链接 minimal-agent）
-├── Interactive Drawing XOR.html  # 原始作品
-└── agent.py / xor_world.py / tools.py / logger.py / web/ ... （待实现）
+├── TECH_DESIGN.md           # 技术设计（背景与决策/整体架构/关键机制/实验）
+├── DEPENDENCIES.md          # 依赖与许可证
+├── agent.py                # Agent 主循环 + 内嵌可视化 HTTP 服务
+├── xor_world.py            # XOR 画布世界：状态/渲染/指标/图案语义/快照
+├── tools.py                # set_region / view_region / evaluate 工具
+├── logger.py               # 日志（复用 test-agent，MIT）
+├── selftest.py             # 离线自测（不依赖 API）
+├── web/index.html          # 实时决策可视化页（原生 JS，轮询 state.json）
+├── test-agent-src/         # 上游参考（发布时删除，改用上游链接 minimal-agent）
+├── Interactive Drawing XOR.html  # 原始画布作品
+├── requirements.txt / env.example / .gitignore
+└── output/                 # 运行产物：state.json + step_*.png（已 gitignore）
 ```

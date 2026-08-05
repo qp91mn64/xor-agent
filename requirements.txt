@@ -1,0 +1,9 @@
+# 依赖清单：python -m pip install -r requirements.txt
+# openai: DeepSeek API 的 OpenAI 兼容客户端（Apache-2.0）
+openai>=1.109.1
+# python-dotenv: 读取 .env 配置（BSD-3-Clause）
+python-dotenv>=1.2.2
+# numpy: 像素级渲染计算（BSD-3-Clause）
+numpy>=1.24
+# pillow: 输出 PNG（HPND）
+pillow>=10.0
