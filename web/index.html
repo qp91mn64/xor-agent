@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XOR 画布 · AI 选图案实时可视化</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: Consolas, "Microsoft YaHei", monospace; background: #111; color: #ddd; margin: 0; padding: 16px; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  h2 { font-size: 14px; margin: 0 0 8px; color: #9cf; }
+  #status { margin-bottom: 12px; font-size: 13px; color: #fc9; }
+  .cards { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+  .card { background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 12px; }
+  img#canvas-img { image-rendering: pixelated; border: 1px solid #444; }
+  canvas { border: 1px solid #444; background: #000; }
+  #timeline { max-height: 400px; overflow-y: auto; width: 420px; font-size: 12px; }
+  .click { border-bottom: 1px dashed #333; padding: 4px 0; }
+  .click b { color: #fc9; }
+  .prev { color: #888; }
+  .why { color: #8c8; margin-top: 2px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>XOR 画布 · AI 选图案实时可视化</h1>
+<div id="status">等待 agent 启动...</div>
+<div class="cards">
+  <div class="card"><h2>当前画布（512×512）</h2><img id="canvas-img" alt="" width="512" height="512"></div>
+  <div class="card"><h2>参数热力图（值 -64..63：低红高蓝）</h2><canvas id="heatmap" width="256" height="256"></canvas></div>
+  <div class="card"><h2>黑白平衡度演化（0..1）</h2><canvas id="chart" width="480" height="160"></canvas></div>
+  <div class="card"><h2>AI 点击轨迹（最新 30 条，含思考）</h2><div id="timeline"></div></div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+async function refresh() {
+  try {
+    const r = await fetch('/output/state.json', { cache: 'no-store' });
+    if (!r.ok) return;
+    render(await r.json());
+  } catch (e) { /* 服务未就绪 */ }
+}
+function render(s) {
+  const last = s.metric_history.length ? s.metric_history[s.metric_history.length - 1] : 0;
+  $('status').textContent =
+    `状态: ${s.status} · 点击 ${s.clicks.length} 次 · 黑白平衡度 ${last.toFixed(3)}` +
+    (s.final_reason ? ` · 结束原因: ${s.final_reason}` : '');
+  $('canvas-img').src = s.image + '?t=' + Date.now();
+  drawHeatmap(s.grid, s.seed_index);
+  drawChart(s.metric_history);
+  drawTimeline(s.clicks);
+}
+function drawHeatmap(grid, seed) {
+  const c = $('heatmap'), ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  const cell = 32;
+  for (let i = 0; i < 64; i++) {
+    const t = (grid[i] + 64) / 128;  // 0..1
+    ctx.fillStyle = `hsl(${Math.round(t * 240)}, 75%, 45%)`;
+    ctx.fillRect((i % 8) * cell, Math.floor(i / 8) * cell, cell, cell);
+    ctx.fillStyle = '#000';
+    ctx.font = '11px monospace';
+    ctx.fillText(i, (i % 8) * cell + 3, Math.floor(i / 8) * cell + 12);
+    ctx.fillText(grid[i], (i % 8) * cell + 3, Math.floor(i / 8) * cell + 26);
+    if (i === seed) {
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect((i % 8) * cell + 1, Math.floor(i / 8) * cell + 1, cell - 2, cell - 2);
+    }
+  }
+}
+function drawChart(hist) {
+  const c = $('chart'), ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  if (hist.length < 1) return;
+  const w = c.width, h = c.height, pad = 6;
+  ctx.strokeStyle = '#333'; ctx.beginPath();
+  for (let y = 0; y <= 4; y++) {
+    const yy = pad + ((h - 2 * pad) * y) / 4;
+    ctx.moveTo(pad, yy); ctx.lineTo(w - pad, yy);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = '#4f4'; ctx.beginPath();
+  hist.forEach((v, i) => {
+    const x = pad + (i * (w - 2 * pad)) / Math.max(hist.length - 1, 1);
+    const y = h - pad - v * (h - 2 * pad);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+  ctx.stroke();
+}
+function drawTimeline(clicks) {
+  const items = clicks.slice(-30).reverse().map(c =>
+    `<div class="click">#${c.index}（r${Math.floor(c.index / 8)}c${c.index % 8}）→ <b>${c.value}</b> <span class="prev">原 ${c.prev}</span>` +
+    (c.reasoning ? `<div class="why">思考: ${esc(c.reasoning)}</div>` : '') + '</div>'
+  ).join('');
+  $('timeline').innerHTML = items || '<div style="color:#888">暂无点击</div>';
+}
+function esc(s) {
+  return (s || '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+setInterval(refresh, 1000);
+refresh();
+</script>
+</body>
+</html>
