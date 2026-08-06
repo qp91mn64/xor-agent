@@ -45,16 +45,18 @@ MAX_CLICKS = 64         # set_region 成功一次记一次
 MAX_TOOL_CALLS = 96     # 工具调用总数上限（含 view_region / evaluate）
 MAX_INVALID = 3         # 连续无效点击（越界/超范围/种子区域）
 
-# 实时思考中间文件：流式等待期间 web 轮询显示，本轮结束删除
-REASONING_LIVE = os.path.join("output", "reasoning_live.json")
-
 # 固定默认端口：避开 8123（Home Assistant 默认端口）等知名端口；被占时自动 fallback 随机。
 # Windows 端口复用坑：必须用 allow_reuse_address=False（见 context-log/2026-08-06_allow-reuse-address-port-reuse.md），
 # 否则 ThreadingHTTPServer 会与占用者"共存绑定"同一端口，fallback 永不触发。
 DEFAULT_PORT = 8765
 
-# 服务根目录固定为脚本所在目录（不依赖 cwd），防止从系统盘启动时暴露目录内容
+# 服务根目录固定为脚本所在目录（不依赖 cwd），防止从系统盘启动时暴露目录内容；
+# 运行产物（快照/实时思考/日志）也一律相对 BASE，否则从别处启动时 .env 找不到、web 轮询 /output/ 404
 BASE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.join(BASE, "output")
+
+# 实时思考中间文件：流式等待期间 web 轮询显示，本轮结束删除
+REASONING_LIVE = os.path.join(OUT, "reasoning_live.json")
 
 PATTERN_DICT = """图案语义（理解一个值会画出什么）：
 - 每区图案由 (dx^dy) & a 决定（dx,dy 为该区域内像素坐标 0..63）；白格 = (dx^dy)&a != 0 的像素。
@@ -84,8 +86,8 @@ def build_system_prompt(seed_value, seed_index):
 
 
 def get_api_key():
-    """从 .env 读取 API 密钥"""
-    load_dotenv()
+    """从 BASE/.env 读取 API 密钥（不依赖 cwd）"""
+    load_dotenv(os.path.join(BASE, ".env"))
     key = os.getenv("DEEPSEEK_API_KEY")
     if not key:
         raise SystemExit("错误：未在 .env 文件中找到 DEEPSEEK_API_KEY（模板见 env.example）")
@@ -115,7 +117,7 @@ def assistant_message(msg):
 def write_reasoning_live(round_id, reasoning):
     """原子写 output/reasoning_live.json（web 轮询显示实时思考）；文件不存在时 web 隐藏该面板"""
     try:
-        os.makedirs("output", exist_ok=True)
+        os.makedirs(OUT, exist_ok=True)
         payload = json.dumps({"round": round_id, "reasoning": reasoning}, ensure_ascii=False)
         tmp = REASONING_LIVE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -249,7 +251,7 @@ def parse_args():
 def main():
     args = parse_args()
     detailed = args.detailed
-    log_file = get_log_filename("xor_agent")
+    log_file = os.path.join(BASE, get_log_filename("xor_agent"))  # 日志固定写到 BASE（不依赖 cwd）
     if detailed:
         write_log("详细日志已开启（--detailed）", log_file)
 
@@ -271,7 +273,7 @@ def main():
         write_log(f"自动打开浏览器（--no-open 可关闭）：{'成功' if opened else '失败'}", log_file)
 
     step = 0
-    xor_world.snapshot(step)  # 初始快照
+    xor_world.snapshot(step, out_dir=OUT)  # 初始快照
     step += 1
 
     client = OpenAI(api_key=get_api_key(), base_url="https://api.deepseek.com")
@@ -282,6 +284,7 @@ def main():
     consecutive_invalid = 0
     reason = ""
 
+    loops = 0  # --rounds 0 时 for 循环不执行，避免统计日志引用未定义变量
     for loops in range(1, args.rounds + 1):
         write_log(f"--- 第 {loops} 次循环 ---", log_file)
         print(f"[请求模型 第{loops}次] ", end="", flush=True)
@@ -320,7 +323,7 @@ def main():
             log_tool_call(name, tc.id, arguments, result, log_file)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
-            xor_world.snapshot(step)  # 每次工具调用后刷新可视化快照
+            xor_world.snapshot(step, out_dir=OUT)  # 每次工具调用后刷新可视化快照
             step += 1
 
             if name == "set_region":
@@ -349,7 +352,7 @@ def main():
     final_metric = xor_world.metric()
     xor_world.state["status"] = "success" if success else "incomplete"
     xor_world.state["final_reason"] = reason or "达到循环上限"
-    xor_world.snapshot(step)
+    xor_world.snapshot(step, out_dir=OUT)
     result_text = (
         f"{'成功' if success else '失败'}：{reason or '达到循环上限'}。"
         f"已点击 {coverage}/63 个非种子区域，最终黑白平衡度 {final_metric:.3f}。"
