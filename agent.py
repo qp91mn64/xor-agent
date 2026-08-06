@@ -7,7 +7,7 @@
     python agent.py --clicks 64   最多点击次数（默认 64）
     python agent.py --port 8765   可视化端口（默认固定 8765，被占时自动 fallback 随机）
     python agent.py --no-open     不自动打开浏览器
-    python agent.py --detailed    详细日志：记录模型思考与工具调用原文
+    python agent.py --detailed    详细日志：记录模型思考与工具调用原文（或环境变量 DETAILED_LOG=1）
     python agent.py --help        查看帮助
 
 设计见 TECH_DESIGN.md。主循环骨架复用 test-agent 的 minimal-agent（MIT）。
@@ -244,16 +244,21 @@ def parse_args():
     p.add_argument("--port", type=int, default=DEFAULT_PORT,
                    help=f"可视化端口，0=随机（默认固定 {DEFAULT_PORT}，被占时自动 fallback 随机）")
     p.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
-    p.add_argument("--detailed", action="store_true", help="详细日志（模型思考+工具调用原文）")
+    p.add_argument("--detailed", action="store_true",
+                   help="详细日志（模型思考+工具调用原文）；也可用环境变量 DETAILED_LOG=1/true/yes 开启")
     return p.parse_args()
 
 
 def main():
     args = parse_args()
-    detailed = args.detailed
+    # 必须先加载 .env 再读环境变量：DETAILED_LOG 可能写在 .env 里。
+    # 原来 load_dotenv 只在 get_api_key() 里调用，晚于下面的 detailed 判断，导致 .env 里的 DETAILED_LOG 永远读不到
+    load_dotenv(os.path.join(BASE, ".env"))
+    # 详细日志开关：命令行 --detailed 或环境变量 DETAILED_LOG=1/true/yes（与 AGENTS.md、env.example 约定一致）
+    detailed = args.detailed or os.getenv("DETAILED_LOG", "").strip().lower() in ("1", "true", "yes")
     log_file = os.path.join(BASE, get_log_filename("xor_agent"))  # 日志固定写到 BASE（不依赖 cwd）
     if detailed:
-        write_log("详细日志已开启（--detailed）", log_file)
+        write_log("详细日志已开启（--detailed / DETAILED_LOG）", log_file)
 
     xor_world.init(seed_value=args.seed, seed_index=args.seed_index)
     write_log(f"种子: 区域 {args.seed_index} = {args.seed}", log_file)
