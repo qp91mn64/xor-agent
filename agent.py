@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import socketserver
+import sys
 import threading
 import time
 import webbrowser
@@ -24,7 +25,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler
 from types import SimpleNamespace
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
 from openai import OpenAI
 
 import tools
@@ -223,6 +224,14 @@ class _Handler(SimpleHTTPRequestHandler):
 class _Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = False  # Windows 端口复用坑：固定端口 fallback 必须（见常量区注释）
 
+    def handle_error(self, request, client_address):
+        """浏览器在响应中途关闭/刷新连接（WinError 10053/10054、BrokenPipe）属正常现象，
+        不打印 traceback 刷屏；其余异常仍按默认处理（见 context-log/2026-08-06_HTTP连接中止刷屏修复）"""
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
+
 
 def start_server(root, port=0):
     """启动 stdlib HTTP 服务（后台线程），返回 (httpd, 实际端口)；端口被占时返回 (None, None)"""
@@ -253,10 +262,17 @@ def main():
     args = parse_args()
     # 必须先加载 .env 再读环境变量：DETAILED_LOG 可能写在 .env 里。
     # 原来 load_dotenv 只在 get_api_key() 里调用，晚于下面的 detailed 判断，导致 .env 里的 DETAILED_LOG 永远读不到
-    load_dotenv(os.path.join(BASE, ".env"))
-    # 详细日志开关：命令行 --detailed 或环境变量 DETAILED_LOG=1/true/yes（与 AGENTS.md、env.example 约定一致）
-    detailed = args.detailed or os.getenv("DETAILED_LOG", "").strip().lower() in ("1", "true", "yes")
+    load_dotenv(os.path.join(BASE, ".env"))  # 密钥等仍走 .env→os.environ（默认不覆盖已有环境变量）
+    # 详细日志开关：--detailed，或 DETAILED_LOG 为 1/true/yes（进程环境或 .env 任一命中即开启）。
+    # 必须再用 dotenv_values 直读 .env：若进程环境残留 DETAILED_LOG=0（setx/profile 遗留），
+    # load_dotenv 默认 override=False 不会用 .env 的 1 覆盖它，会静默压掉开关（实测根因，见 context-log）。
+    env_val = os.getenv("DETAILED_LOG", "")
+    env_file_val = (dotenv_values(os.path.join(BASE, ".env")).get("DETAILED_LOG") or "")
+    on_list = ("1", "true", "yes")
+    detailed = args.detailed or env_val.strip().lower() in on_list or env_file_val.strip().lower() in on_list
     log_file = os.path.join(BASE, get_log_filename("xor_agent"))  # 日志固定写到 BASE（不依赖 cwd）
+    # 启动诊断（保留）：同时显示进程环境与 .env 两个来源，排查"设了但没生效"直接看日志即可定位
+    write_log(f"DETAILED_LOG 进程环境={env_val!r} .env={env_file_val!r} → detailed={detailed}", log_file)
     if detailed:
         write_log("详细日志已开启（--detailed / DETAILED_LOG）", log_file)
 
