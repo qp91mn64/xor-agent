@@ -47,12 +47,36 @@ TOOLS = [
 ]
 
 
+def _require_int(arguments, key):
+    """从 arguments 提取整数参数；缺键/非 dict/类型错误时返回 (None, Invalid 信息)。
+
+    模型输出不可信：可能缺 key、把 index/value 传成字符串或浮点（如 "5"、5.0）、
+    甚至整个 arguments 解析成非对象。这里把非法输入挡在工具边界外，返回 Invalid
+    文本喂给 agent 的连续无效点击计数，而不是抛 KeyError/TypeError 崩掉主循环。
+    """
+    if not isinstance(arguments, dict) or key not in arguments:
+        return None, f"Invalid: 缺少参数 {key}"
+    v = arguments[key]
+    if isinstance(v, bool) or not isinstance(v, int):
+        return None, f"Invalid: 参数 {key} 应为整数，实际为 {v!r}"
+    return v, None
+
+
 def execute_tool(name, arguments, reasoning=None, round_id=None):
     """执行工具并返回结果文本；reasoning 为模型本轮思考，round_id 为循环轮次，均记录进点击轨迹"""
     if name == "set_region":
-        return xor_world.set_region(arguments["index"], arguments["value"], reasoning, round_id)
+        index, err = _require_int(arguments, "index")
+        if err:
+            return err
+        value, err = _require_int(arguments, "value")
+        if err:
+            return err
+        return xor_world.set_region(index, value, reasoning, round_id)
     if name == "view_region":
-        return xor_world.view_region(arguments["index"])
+        index, err = _require_int(arguments, "index")
+        if err:
+            return err
+        return xor_world.view_region(index)
     if name == "evaluate":
         return xor_world.evaluate()
     return f"Unknown tool: {name}"
