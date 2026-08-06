@@ -62,8 +62,9 @@ def test_stream_accumulation():
 
 
 def test_server():
-    """HTTP 可视化服务冒烟测试：/ 映射到 index.html，/output/state.json 可达"""
+    """HTTP 可视化服务冒烟测试：/ 映射到 index.html，/output/state.json 可达；白名单外与敏感文件一律 404"""
     import time
+    import urllib.error
     import urllib.request
 
     import agent
@@ -76,7 +77,15 @@ def test_server():
             assert r.status == 200 and "<title>XOR" in body, body[:200]
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/output/state.json") as r:
             assert r.status == 200
-        print("HTTP 服务 OK: / 与 /output/state.json 均 200")
+        # 白名单外一律 404：项目根普通文件、点文件（.env 等）、探针/临时脚本、目录列表（/output/ 不再列目录）
+        for blocked in ("/README.md", "/agent.py", "/context-log/", "/output/",
+                        "/.gitignore", "/probe_ui_launch.py"):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}{blocked}")
+                raise AssertionError(f"白名单外路径应 404: {blocked}")
+            except urllib.error.HTTPError as e:
+                assert e.code == 404, f"{blocked} 应 404，实际 {e.code}"
+        print("HTTP 服务 OK: / 、/output/state.json 200；白名单外/敏感文件 404")
     finally:
         httpd.shutdown()
 

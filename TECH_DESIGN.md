@@ -101,7 +101,9 @@ web/index.html（画布 / 热力图 / 指标折线 / 点击轨迹）
 **架构一句话**：agent 每走一步把状态落盘到 `output/`（JSON+PNG），`web/index.html` 每 1 秒轮询 `output/state.json` 并渲染；中间只有一个标准库 HTTP 服务，无框架、无 CDN、无 WebSocket。
 
 **服务端（agent.py，标准库实现）**
-- `start_server()`：`ThreadingHTTPServer` + `SimpleHTTPRequestHandler`（`directory=项目根目录`），固定绑定 `127.0.0.1`，端口默认 0（由系统随机分配空闲端口），`--port` 可指定固定值；后台守护线程运行。
+- `start_server()`：`socketserver.ThreadingTCPServer` 子类（`allow_reuse_address=False`，Windows 端口复用坑：必须显式关闭，否则固定端口 fallback 永不触发、与占用者共存，见 context-log）+ `SimpleHTTPRequestHandler`（`directory=BASE`，BASE=脚本所在目录，不依赖 cwd，防止从系统盘启动暴露目录）。固定绑定 `127.0.0.1`，端口默认固定 8765（被占时自动 fallback 随机并打印实际端口），`--port` 可覆盖（0=随机）；后台守护线程运行。
+- 敏感文件拒绝：`.env` 等点文件、`*.log`、`probe_*`/`_` 前缀的探针临时脚本一律返回 404，防止密钥/日志被本机 HTTP 下载。
+- 自动打开浏览器：启动后 `webbrowser.open(url)`（`--no-open` 可关），避免思考流把网址刷出视野。
 - 路径映射：`/` 或 `/index.html` 改写为 `/web/index.html`；其余按项目根目录静态提供，所以 `/output/step_003.png`、`/output/state.json` 可直接 fetch。
 - `xor_world.snapshot(step)`：**每次工具调用后**渲染 512×512 PNG → 写 `output/step_NNN.png`；更新 `state["image"]`（URL 路径）；指标追加进 `metric_history`；写 `output/state.json`（含 grid、seed_index、seed_value、clicks（每条含 reasoning、round）、metric_history、status、final_reason、image）。启动时先做一次 step 0 快照。
 - 流式实时思考：API 调用用 `stream=True`，思考增量（reasoning_content）实时打印到控制台，并原子写 `output/reasoning_live.json`（`{round, reasoning}`）供 web 轮询；一轮结束后由下一轮覆盖，运行结束删除。流式仅改变传输方式，不改变 token 计费，无额外成本。
@@ -112,7 +114,7 @@ web/index.html（画布 / 热力图 / 指标折线 / 点击轨迹）
 
 **为什么用"轮询文件"而不是实时推送**：主循环是同步的（一轮 = 一次 API 请求），每步落盘一次，与 1 秒轮询天然匹配，实现最简单。代价是刷新延迟 ≤1 秒，对观察 AI 的点击节奏足够。流式等待期间通过 `reasoning_live.json` 提供实时反馈——首次请求实测约 47 秒纯等待，无反馈会误以为卡死。
 
-**地址与端口（唯一约定）**：HTTP 服务固定绑定 `127.0.0.1`（本机回环地址；访问 URL 一律用 `127.0.0.1`，不用 `localhost` 字样），端口默认 0（由系统随机分配空闲端口），`--port` 可覆盖。控制台打印的访问地址格式固定为 `http://127.0.0.1:<port>/`。v1 仅支持本机浏览器访问，不绑 `0.0.0.0`、不做跨设备方案。
+**地址与端口（唯一约定）**：HTTP 服务固定绑定 `127.0.0.1`（本机回环地址；访问 URL 一律用 `127.0.0.1`，不用 `localhost` 字样），端口默认固定 **8765**（避开 8123 等知名端口；被占时自动 fallback 随机并打印实际端口），`--port` 可覆盖（0=随机）。控制台打印的访问地址格式固定为 `http://127.0.0.1:<port>/`，并在启动后自动打开浏览器（`--no-open` 关闭）。v1 仅支持本机浏览器访问，不绑 `0.0.0.0`、不做跨设备方案。
 
 ## 四、实验设计与扩展
 

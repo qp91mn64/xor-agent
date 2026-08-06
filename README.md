@@ -15,8 +15,9 @@
 ```powershell
 python -m pip install -r requirements.txt   # 安装依赖（openai/dotenv/numpy/pillow）
 # 复制 env.example 为 .env，填入 DEEPSEEK_API_KEY
-python agent.py --seed 5 --detailed         # 运行；控制台会打印可视化网址
-# 可选：--seed-index 0-63 指定种子区域编号（默认 0，区域0）；--port 固定端口；--rounds/--clicks 调整终止上限
+python agent.py --seed 5 --detailed         # 运行；自动打开可视化页面，控制台打印网址
+# 可选：--seed-index 0-63 指定种子区域编号（默认 0）；--port 端口（默认固定 8765，被占自动 fallback 随机）；
+# --no-open 不自动打开浏览器；--rounds/--clicks 调整终止上限
 ```
 
 打开浏览器访问打印的网址，可实时看到 AI 每次"点击"后的画布、参数热力图、黑白平衡度演化与 AI 思考（决策可视化；等待模型响应时，控制台与网页实时显示思考过程）。

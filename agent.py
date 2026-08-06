@@ -5,7 +5,8 @@
     python agent.py --seed 5      种子区域值（默认 0）
     python agent.py --rounds 30   最多循环次数（默认 30）
     python agent.py --clicks 64   最多点击次数（默认 64）
-    python agent.py --port 8123   可视化端口（默认随机分配）
+    python agent.py --port 8765   可视化端口（默认固定 8765，被占时自动 fallback 随机）
+    python agent.py --no-open     不自动打开浏览器
     python agent.py --detailed    详细日志：记录模型思考与工具调用原文
     python agent.py --help        查看帮助
 
@@ -15,10 +16,12 @@
 import argparse
 import json
 import os
+import socketserver
 import threading
 import time
+import webbrowser
 from functools import partial
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler
 from types import SimpleNamespace
 
 from dotenv import load_dotenv
@@ -44,6 +47,14 @@ MAX_INVALID = 3         # 连续无效点击（越界/超范围/种子区域）
 
 # 实时思考中间文件：流式等待期间 web 轮询显示，本轮结束删除
 REASONING_LIVE = os.path.join("output", "reasoning_live.json")
+
+# 固定默认端口：避开 8123（Home Assistant 默认端口）等知名端口；被占时自动 fallback 随机。
+# Windows 端口复用坑：必须用 allow_reuse_address=False（见 context-log/2026-08-06_allow-reuse-address-port-reuse.md），
+# 否则 ThreadingHTTPServer 会与占用者"共存绑定"同一端口，fallback 永不触发。
+DEFAULT_PORT = 8765
+
+# 服务根目录固定为脚本所在目录（不依赖 cwd），防止从系统盘启动时暴露目录内容
+BASE = os.path.dirname(os.path.abspath(__file__))
 
 PATTERN_DICT = """图案语义（理解一个值会画出什么）：
 - 每区图案由 (dx^dy) & a 决定（dx,dy 为该区域内像素坐标 0..63）；白格 = (dx^dy)&a != 0 的像素。
@@ -171,25 +182,53 @@ def chat_stream(client, messages, round_id):
     )
 
 
+def _is_sensitive_path(path):
+    """拒绝敏感文件：点文件（.env 等）、*.log、探针/临时脚本——防止密钥/日志被本机 HTTP 下载"""
+    name = path.split("?")[0].lstrip("/")
+    for part in name.split("/"):
+        low = part.lower()
+        if low.startswith(".") or low.endswith(".log"):
+            return True
+        if low.startswith("probe_") or low.startswith("_"):
+            return True
+    return False
+
+
 class _Handler(SimpleHTTPRequestHandler):
-    """根路径映射到 web/index.html，其余按项目根目录提供静态文件（/output/...）"""
+    """最小暴露：只放行 web/ 与 output/ 两个子目录的文件（/ 映射到 /web/index.html），其余一律 404；目录请求也 404，避免列目录枚举文件"""
 
     def __init__(self, *args, directory=None, **kwargs):
         super().__init__(*args, directory=directory, **kwargs)
 
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
-            self.path = "/web/index.html"
+        if _is_sensitive_path(self.path):
+            self.send_error(404)
+            return
+        path = self.path.split("?")[0]
+        if path in ("/", "/index.html"):
+            path = "/web/index.html"
+            self.path = path
+        # 白名单：只有 /web/ 与 /output/ 前缀可达；以 / 结尾的目录请求一律 404（无 index.html 不列目录）
+        if not (path.startswith("/web/") or path.startswith("/output/")) or path.endswith("/"):
+            self.send_error(404)
+            return
         super().do_GET()
 
     def log_message(self, *args):
         pass  # 静默访问日志
 
 
+class _Server(socketserver.ThreadingTCPServer):
+    allow_reuse_address = False  # Windows 端口复用坑：固定端口 fallback 必须（见常量区注释）
+
+
 def start_server(root, port=0):
-    """启动 stdlib HTTP 服务（后台线程），返回 (httpd, 实际端口)"""
+    """启动 stdlib HTTP 服务（后台线程），返回 (httpd, 实际端口)；端口被占时返回 (None, None)"""
     handler = partial(_Handler, directory=root)
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    try:
+        httpd = _Server(("127.0.0.1", port), handler)
+    except OSError:
+        return None, None
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd, httpd.server_address[1]
 
@@ -200,7 +239,9 @@ def parse_args():
     p.add_argument("--seed-index", type=int, default=0, help="种子区域编号 0-63（默认 0）")
     p.add_argument("--rounds", type=int, default=MAX_LOOPS, help=f"最多循环次数（默认 {MAX_LOOPS}）")
     p.add_argument("--clicks", type=int, default=MAX_CLICKS, help=f"最多点击次数（默认 {MAX_CLICKS}）")
-    p.add_argument("--port", type=int, default=0, help="可视化端口，0=随机（默认 0）")
+    p.add_argument("--port", type=int, default=DEFAULT_PORT,
+                   help=f"可视化端口，0=随机（默认固定 {DEFAULT_PORT}，被占时自动 fallback 随机）")
+    p.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
     p.add_argument("--detailed", action="store_true", help="详细日志（模型思考+工具调用原文）")
     return p.parse_args()
 
@@ -216,9 +257,18 @@ def main():
     write_log(f"种子: 区域 {args.seed_index} = {args.seed}", log_file)
     write_log("画布: 8×8 区域，每区参数 -64..63；种子区域锁定不可修改", log_file)
 
-    # 实时可视化 HTTP 服务（stdlib，无框架）
-    httpd, port = start_server(os.path.abspath("."), args.port)
-    write_log(f"实时可视化: http://127.0.0.1:{port}/", log_file)
+    # 实时可视化 HTTP 服务（stdlib，无框架）：固定端口，被占时 fallback 随机；自动打开浏览器
+    httpd, port = start_server(BASE, args.port)
+    if httpd is None:
+        write_log(f"端口 {args.port} 被占用，fallback 到随机端口", log_file)
+        httpd, port = start_server(BASE, 0)
+    if httpd is None:
+        raise SystemExit("错误：无法启动 HTTP 服务")
+    url = f"http://127.0.0.1:{port}/"
+    write_log(f"实时可视化: {url}", log_file)
+    if not args.no_open:
+        opened = webbrowser.open(url)
+        write_log(f"自动打开浏览器（--no-open 可关闭）：{'成功' if opened else '失败'}", log_file)
 
     step = 0
     xor_world.snapshot(step)  # 初始快照
