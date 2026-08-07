@@ -102,9 +102,9 @@ web/index.html（画布 / 热力图 / 指标折线 / 点击轨迹）
 
 **服务端（agent.py，标准库实现）**
 - `start_server()`：`socketserver.ThreadingTCPServer` 子类（`allow_reuse_address=False`，Windows 端口复用坑：必须显式关闭，否则固定端口 fallback 永不触发、与占用者共存，见 context-log）+ `SimpleHTTPRequestHandler`（`directory=BASE`，BASE=脚本所在目录，不依赖 cwd，防止从系统盘启动暴露目录）。固定绑定 `127.0.0.1`，端口默认固定 8765（被占时自动 fallback 随机并打印实际端口），`--port` 可覆盖（0=随机）；后台守护线程运行。
-- 敏感文件拒绝：`.env` 等点文件、`*.log`、`probe_*`/`_` 前缀的探针临时脚本一律返回 404，防止密钥/日志被本机 HTTP 下载。
+- 路径白名单：`/` 或 `/index.html` 改写为 `/web/index.html`；只放行 `/web/` 与 `/output/` 前缀的文件，以 `/` 结尾的目录请求一律 404（不列目录、不枚举文件），其余路径一律 404——所以 `/output/step_003.png`、`/output/state.json` 可直接 fetch，而 `.env`、`*.py` 等根目录文件不可达。
+- 敏感文件拒绝（白名单之外的第二道防线）：`.env` 等点文件、`*.log`、`probe_*`/`_` 前缀的探针临时脚本一律返回 404，防止密钥/日志被本机 HTTP 下载（`_is_sensitive_path`）。
 - 自动打开浏览器：启动后 `webbrowser.open(url)`（`--no-open` 可关），避免思考流把网址刷出视野。
-- 路径映射：`/` 或 `/index.html` 改写为 `/web/index.html`；其余按项目根目录静态提供，所以 `/output/step_003.png`、`/output/state.json` 可直接 fetch。
 - `xor_world.snapshot(step)`：**每次工具调用后**渲染 512×512 PNG → 写 `output/step_NNN.png`；更新 `state["image"]`（URL 路径）；指标追加进 `metric_history`；写 `output/state.json`（含 grid、seed_index、seed_value、clicks（每条含 reasoning、round）、metric_history、status、final_reason、image）。启动时先做一次 step 0 快照。
 - 流式实时思考：API 调用用 `stream=True`，思考增量（reasoning_content）实时打印到控制台，并原子写 `output/reasoning_live.json`（`{round, reasoning}`）供 web 轮询；一轮结束后由下一轮覆盖，运行结束删除。流式仅改变传输方式，不改变 token 计费，无额外成本。
 
