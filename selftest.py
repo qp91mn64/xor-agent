@@ -90,6 +90,29 @@ def test_server():
         httpd.shutdown()
 
 
+def test_pattern_desc():
+    """图案描述读取机制离线验证：md 给规则（不枚举全部图案）+ 代码按值兜底（覆盖全部 128 个值）"""
+    import pattern_desc
+
+    # md 读取：无 BOM（Windows 记事本可能加，会导致提示词首字符不可见）、关键章节齐全
+    doc = pattern_desc.pattern_doc()
+    assert not doc.startswith("\ufeff"), "pattern_description.md 不应含 UTF-8 BOM"
+    for kw in ("# 图案描述", "计算公式", "低三位", "高三位", "多个图案的结合"):
+        assert kw in doc, f"pattern_description.md 缺少关键章节: {kw}"
+
+    # 全值域 -64..63：每个值都有确定、非空的结构描述；负值 = 其互补掩码(~a)的描述 +（反色）
+    for a in range(-64, 64):
+        d = pattern_desc.pattern_description(a)
+        assert isinstance(d, str) and d, f"a={a} 描述为空"
+        if a == 0:
+            assert d == "纯黑"
+        elif a == -1:
+            assert d == "纯白"
+        elif a < -1:
+            assert d == pattern_desc.pattern_description(~a) + "（反色）", f"a={a} 与互补值口径不一致"
+    print("图案描述读取 OK: md 无 BOM/章节齐全；128 个值全覆盖，负值反色口径一致")
+
+
 def main():
     # 1. 初始化与种子锁定
     xor_world.init(seed_value=5, seed_index=0)
@@ -130,6 +153,14 @@ def main():
           xor_world.pattern_description(3), "|",
           xor_world.pattern_description(63), "|",
           xor_world.pattern_description(-64))
+
+    # 6b. 图案描述读取机制全量验证（md 读取 + 128 值全覆盖）
+    test_pattern_desc()
+
+    # 6c. 0 歧义回归：刻意设 a=0（纯黑）算已设定；未设定只认"未点击过"
+    xor_world.set_region(2, 0)
+    assert 2 not in xor_world.unset_regions(), "刻意设 a=0 不应计入未设定"
+    print("0 歧义 OK: 刻意纯黑 a=0 视为已设定；未设定=未点击过")
 
     # 7. evaluate / view_region / tools 分派
     print(xor_world.evaluate())

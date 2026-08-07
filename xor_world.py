@@ -13,6 +13,8 @@ import os
 import numpy as np
 from PIL import Image
 
+from pattern_desc import pattern_description
+
 ROWS = 8
 COLS = 8
 WIDTH = 512
@@ -48,23 +50,6 @@ def init(seed_value=0, seed_index=0):
     state["status"] = "running"
     state["final_reason"] = ""
     state["image"] = ""
-
-
-def pattern_description(a):
-    """把参数值 a 的图案翻译成文字（喂给模型的图案语义字典）"""
-    if a == 0:
-        return "纯黑"
-    if a == -1:
-        return "纯白"
-    mask = a if a >= 0 else ~a
-    bits = [k for k in range(6) if (mask >> k) & 1]
-    if len(bits) == 1:
-        base = f"{2 ** bits[0]}×{2 ** bits[0]}棋盘格"
-    else:
-        base = "白格=" + "∪".join(f"{2 ** k}×{2 ** k}棋盘" for k in bits)
-    if a < 0:
-        base += "（反色）"
-    return base
 
 
 def render():
@@ -129,16 +114,26 @@ def view_region(index):
     return f"区域 {index}（第{index // COLS}行第{index % COLS}列）{tag}当前值 {a}：{pattern_description(a)}"
 
 
+def unset_regions():
+    """未设定区域 = 从未被点击过的非种子区域（以点击轨迹为准）。
+
+    a=0（纯黑）是合法图案，不算未设定：grid 初始全 0，未点击与刻意设 0 无法靠值区分，
+    只能靠"是否点击过"判定，避免 0 的歧义（纯黑图案 vs 未设定哨兵）。
+    """
+    clicked = {c["index"] for c in state["clicks"]}
+    return [i for i in range(ROWS * COLS) if i != state["seed_index"] and i not in clicked]
+
+
 def evaluate():
-    """evaluate 工具：渲染整幅并返回指标与未设定区域数"""
-    canvas = render()
-    m = metric(canvas)
-    br = black_ratio(canvas)
-    unset = sum(1 for i, v in enumerate(state["grid"]) if i != state["seed_index"] and v == 0)
-    filled = ROWS * COLS - 1 - unset
-    return (f"黑白平衡度={m:.3f}（黑占比 {br * 100:.1f}%）。"
-            f"已设定 {filled}/63 个非种子区域，未设定 {unset} 个（值为 0 纯黑）。"
-            f"提示：整幅画布越接近黑白各半，指标越高。")
+    """evaluate 工具：报告整幅画布进度（未设定 = 未点击过；生成范式：不提供量化指标，无优化目标）"""
+    unset = unset_regions()
+    filled = ROWS * COLS - 1 - len(unset)
+    if unset:
+        shown = "、".join(str(i) for i in unset[:10])
+        suffix = " 等" if len(unset) > 10 else ""
+        return (f"已设定 {filled}/63 个非种子区域，未设定 {len(unset)} 个（尚未点击，默认纯黑）："
+                f"{shown}{suffix}。")
+    return f"已设定 {filled}/63 个非种子区域，全部完成。"
 
 
 def coverage():

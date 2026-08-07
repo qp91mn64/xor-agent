@@ -1,4 +1,4 @@
-# Agent 测试
+# XOR 画布选择图案 Agent
 
 现有自己写的 Interactive Drawing XOR，点击不同区域即可选择不同的图案填充画布，按下 `s` 可以保存图片。
 
@@ -6,9 +6,11 @@
 
 比如说，指定一个初始值，让AI自行选择剩余区域的值，然后画图的代码读取AI选择的参数值，画出图形？
 
+实现方式：Vibe Coding，Trae 接入自定义模型，用 DeepSeek API，deepseek-v4-flash（正式版已经上新）。从复用之前的项目 [minimal-agent](https://github.com/qp91mn64/minimal-agent) 代码（偷懒，免得重新发明轮子）开始。
+
 ## 状态
 
-设计见 [技术设计](TECH_DESIGN.md)，依赖与许可证见 [DEPENDENCIES.md](DEPENDENCIES.md)。核心已实现：Agent 主循环 + XOR 画布世界 + 实时决策可视化。
+设计见 [技术设计](TECH_DESIGN.md)，依赖与许可证见 [DEPENDENCIES.md](DEPENDENCIES.md)。核心已实现：Agent 主循环 + XOR 画布世界 + 实时决策可视化。AI 按 [图案描述](pattern_description.md) 自主设计画布（生成范式，不追求量化指标）。
 
 ## 快速开始
 
@@ -25,11 +27,13 @@ python agent.py --seed 5 --detailed         # 运行；自动打开可视化页�
 ## 结构
 
 ```
-test-agent-2/
+xor-agent/
 ├── TECH_DESIGN.md           # 技术设计（背景与决策/整体架构/关键机制/实验）
 ├── DEPENDENCIES.md          # 依赖与许可证
 ├── agent.py                # Agent 主循环 + 内嵌可视化 HTTP 服务
-├── xor_world.py            # XOR 画布世界：状态/渲染/指标/图案语义/快照
+├── xor_world.py            # XOR 画布世界：状态/渲染/指标记录/快照
+├── pattern_desc.py         # 图案语义单一来源：读 pattern_description.md + 程序化描述
+├── pattern_description.md  # 图案语义参考文档（手写，AI 的设计依据）
 ├── tools.py                # set_region / view_region / evaluate 工具
 ├── logger.py               # 日志（复用 test-agent，MIT）
 ├── selftest.py             # 离线自测（不依赖 API）

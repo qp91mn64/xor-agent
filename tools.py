@@ -40,7 +40,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "evaluate",
-            "description": "渲染整幅画布，返回黑白平衡度指标与未设定区域数",
+            "description": "渲染整幅画布，返回进度（已设定/未设定区域数；未设定=尚未点击过；生成范式下不提供量化指标）",
             "parameters": {"type": "object", "properties": {}},
         },
     },

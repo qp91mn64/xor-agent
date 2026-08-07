@@ -28,6 +28,7 @@ from types import SimpleNamespace
 from dotenv import load_dotenv, dotenv_values
 from openai import OpenAI
 
+import pattern_desc
 import tools
 import xor_world
 from logger import (
@@ -59,28 +60,21 @@ OUT = os.path.join(BASE, "output")
 # 实时思考中间文件：流式等待期间 web 轮询显示，本轮结束删除
 REASONING_LIVE = os.path.join(OUT, "reasoning_live.json")
 
-PATTERN_DICT = """图案语义（理解一个值会画出什么）：
-- 每区图案由 (dx^dy) & a 决定（dx,dy 为该区域内像素坐标 0..63）；白格 = (dx^dy)&a != 0 的像素。
-- a=0：纯黑；a=-1：纯白。
-- 单个二进制位 2^k（1,2,4,8,16,32）：2^k×2^k 的黑白棋盘格，黑白各半。
-- 多个位：白格是各位棋盘格的并集（黑格变少；黑格 = dx 与 dy 在这些位上全部相等）。
-- a<0：取 ~a 的图案并反色（黑白互换）。
-- 参考：a=1 细棋盘格；a=2 是 2×2 块棋盘；a=4 是 4×4 块棋盘；a=3 白底，黑色斜线沿主对角线方向、周期 4（黑占 25%）；a=63 几乎全白只剩主对角线。"""
-
 
 def build_system_prompt(seed_value, seed_index):
     return f"""你是一个数字艺术家，正在为一幅 512×512 的 XOR 图案画布选择参数。画布分为 8×8=64 个区域，每区一个参数值 a（整数，-64..63），该值决定区域内的图案。
 
-{PATTERN_DICT}
+{pattern_desc.pattern_doc()}
 
 任务：
 - 区域 {seed_index}（种子区域）已固定为 {seed_value}，不可修改。
 - 请用 set_region 工具为其余 63 个区域逐一选择参数值（一次点击一个区域）。
-- 可随时用 view_region 查看某区域当前值，用 evaluate 查看整幅画布指标。
+- 可随时用 view_region 查看某区域当前值与图案描述，用 evaluate 查看整幅画布的进度。
 
 目标：
-- 让整幅画布的黑白平衡度尽量高（evaluate 返回该指标，1.0=黑白各半，越接近越好）。
-- 尽量让每个非种子区域都有明确图案，不要留下 a=0 的纯黑空区域。
+- 把整幅画布当作你的作品来设计：先想清楚每块区域要什么图案，再选择能画出该图案的参数值。
+- 设定后用 view_region 核对实际图案与你的意图是否一致，不一致就调整。
+- 每个非种子区域都要被你点击设定过：未点击的区域默认纯黑、视为未处理。刻意选用 a=0（纯黑）作为图案是允许的，但要显式点击设定。
 - 建议先 evaluate 了解初始状态，再规划点击顺序。
 
 结束：当画布已足够好或点击次数将尽时，直接输出一段最终总结文字即可（不再调用工具）。"""
@@ -370,13 +364,12 @@ def main():
     # 结果判定：依据画布状态，而非模型输出
     coverage = xor_world.coverage()
     success = coverage == xor_world.ROWS * xor_world.COLS - 1  # 63 个非种子区域
-    final_metric = xor_world.metric()
     xor_world.state["status"] = "success" if success else "incomplete"
     xor_world.state["final_reason"] = reason or "达到循环上限"
     xor_world.snapshot(step, out_dir=OUT)
     result_text = (
         f"{'成功' if success else '失败'}：{reason or '达到循环上限'}。"
-        f"已点击 {coverage}/63 个非种子区域，最终黑白平衡度 {final_metric:.3f}。"
+        f"已点击 {coverage}/63 个非种子区域。"
     )
     write_log(result_text, log_file)
     write_log(
