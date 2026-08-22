@@ -78,8 +78,14 @@ def test_server():
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/output/state.json") as r:
             assert r.status == 200
         # 白名单外一律 404：项目根普通文件、点文件（.env 等）、探针/临时脚本、目录列表（/output/ 不再列目录）
+        # 路径穿越回归：原始 ../ 与 URL 编码（%2e%2e=..、%2eenv=.env、含嵌套 %252e）都必须 404
+        # （见 context-log/2026-08-22_HTTP路径穿越密钥泄露.md）
         for blocked in ("/README.md", "/agent.py", "/context-log/", "/output/",
-                        "/.gitignore", "/probe_ui_launch.py"):
+                        "/.gitignore", "/probe_ui_launch.py",
+                        "/web/../agent.py", "/web/%2e%2e/agent.py", "/web/%2e%2e/%2eenv",
+                        "/output/%2e%2e/%2eenv", "/output/%2e%2e/agent.py",
+                        "/web/%252e%252e/%252eenv", "/web/%252e%252e/agent.py",
+                        "/output/%252e%252e/%252eenv", "/web/%00", "/web/%0a"):
             try:
                 urllib.request.urlopen(f"http://127.0.0.1:{port}{blocked}")
                 raise AssertionError(f"白名单外路径应 404: {blocked}")

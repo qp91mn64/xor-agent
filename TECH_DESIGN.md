@@ -106,7 +106,7 @@ v1 曾以黑白平衡度 `1 - |黑像素占比 - 0.5| × 2`（渲染后数像素
 **服务端（agent.py，标准库实现）**
 - `start_server()`：`socketserver.ThreadingTCPServer` 子类（`allow_reuse_address=False`，Windows 端口复用坑：必须显式关闭，否则固定端口 fallback 永不触发、与占用者共存，见 context-log）+ `SimpleHTTPRequestHandler`（`directory=BASE`，BASE=脚本所在目录，不依赖 cwd，防止从系统盘启动暴露目录）。固定绑定 `127.0.0.1`，端口默认固定 8765（被占时自动 fallback 随机并打印实际端口），`--port` 可覆盖（0=随机）；后台守护线程运行。
 - 路径白名单：`/` 或 `/index.html` 改写为 `/web/index.html`；只放行 `/web/` 与 `/output/` 前缀的文件，以 `/` 结尾的目录请求一律 404（不列目录、不枚举文件），其余路径一律 404——所以 `/output/step_003.png`、`/output/state.json` 可直接 fetch，而 `.env`、`*.py` 等根目录文件不可达。
-- 敏感文件拒绝（白名单之外的第二道防线）：`.env` 等点文件、`*.log`、`probe_*`/`_` 前缀的探针临时脚本一律返回 404，防止密钥/日志被本机 HTTP 下载（`_is_sensitive_path`）。
+- 敏感文件拒绝（白名单之外的第二道防线）：`.env` 等点文件、`*.log`、`probe_*`/`_` 前缀的探针临时脚本一律返回 404，防止密钥/日志被本机 HTTP 下载（`_is_sensitive_path`）。`do_GET` 先 `unquote` 再 `normpath` 再检查，URL 编码的路径穿越（`%2e%2e`=`.`/`..`、`%2eenv`=`.env`、嵌套 `%252e`）与含 ASCII 控制字符（`%00`/`%0a`）的路径同样 404（实测可下载 `.env`，见 context-log/2026-08-22_HTTP路径穿越密钥泄露.md）。
 - 自动打开浏览器：启动后 `webbrowser.open(url)`（`--no-open` 可关），避免思考流把网址刷出视野。
 - `xor_world.snapshot(step)`：**每次工具调用后**渲染 512×512 PNG → 写 `output/step_NNN.png`；更新 `state["image"]`（URL 路径）；指标追加进 `metric_history`；写 `output/state.json`（含 grid、seed_index、seed_value、clicks（每条含 reasoning、round）、metric_history、status、final_reason、image）。启动时先做一次 step 0 快照。
 - 无密钥不退出：启动后若 `.env` 未配置 `DEEPSEEK_API_KEY`，不报错退出——`state["status"]` 置为 `no_key` 并快照，网页显示配置引导（复制 env.example 填 key）；主线程每 2 秒重读 `.env`，检测到密钥后 `status` 恢复 `running` 并自动开始运行（无需重启）。不能在这里直接 `SystemExit`：进程退出会杀死服务线程，浏览器只剩一个连不上的死页面。

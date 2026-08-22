@@ -16,10 +16,12 @@
 import argparse
 import json
 import os
+import posixpath
 import socketserver
 import sys
 import threading
 import time
+import urllib.parse
 import webbrowser
 from functools import partial
 from http.server import SimpleHTTPRequestHandler
@@ -196,15 +198,26 @@ class _Handler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=directory, **kwargs)
 
     def do_GET(self):
-        if _is_sensitive_path(self.path):
+        # 先解码再规范化路径再检查：URL 编码的路径穿越（%2e%2e=..、%2eenv=.env）可绕过
+        # 未解码路径上的白名单与敏感检查，translate_path 解码 normpath 后落到根目录文件
+        # （实测可下载 .env 与 agent.py 源码，见 context-log/2026-08-22_HTTP路径穿越密钥泄露.md）
+        raw = urllib.parse.unquote(self.path.split("?")[0])
+        if raw.endswith("/") and raw != "/":  # 目录请求一律 404（含编码的 /web/%2e%2e/ 等）
             self.send_error(404)
             return
-        path = self.path.split("?")[0]
+        path = posixpath.normpath(raw)
+        # 拒绝控制字符（空字节 %00、CR/LF 等）：文件系统不接受，且实测 %00 会让服务器异常断连而非 404
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in path):
+            self.send_error(404)
+            return
+        if _is_sensitive_path(path):
+            self.send_error(404)
+            return
         if path in ("/", "/index.html"):
             path = "/web/index.html"
             self.path = path
-        # 白名单：只有 /web/ 与 /output/ 前缀可达；以 / 结尾的目录请求一律 404（无 index.html 不列目录）
-        if not (path.startswith("/web/") or path.startswith("/output/")) or path.endswith("/"):
+        # 白名单：只有 /web/ 与 /output/ 前缀可达（规范化后，../ 已消解）
+        if not (path.startswith("/web/") or path.startswith("/output/")):
             self.send_error(404)
             return
         super().do_GET()
