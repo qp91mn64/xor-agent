@@ -109,6 +109,7 @@ v1 曾以黑白平衡度 `1 - |黑像素占比 - 0.5| × 2`（渲染后数像素
 - 敏感文件拒绝（白名单之外的第二道防线）：`.env` 等点文件、`*.log`、`probe_*`/`_` 前缀的探针临时脚本一律返回 404，防止密钥/日志被本机 HTTP 下载（`_is_sensitive_path`）。
 - 自动打开浏览器：启动后 `webbrowser.open(url)`（`--no-open` 可关），避免思考流把网址刷出视野。
 - `xor_world.snapshot(step)`：**每次工具调用后**渲染 512×512 PNG → 写 `output/step_NNN.png`；更新 `state["image"]`（URL 路径）；指标追加进 `metric_history`；写 `output/state.json`（含 grid、seed_index、seed_value、clicks（每条含 reasoning、round）、metric_history、status、final_reason、image）。启动时先做一次 step 0 快照。
+- 无密钥不退出：启动后若 `.env` 未配置 `DEEPSEEK_API_KEY`，不报错退出——`state["status"]` 置为 `no_key` 并快照，网页显示配置引导（复制 env.example 填 key）；主线程每 2 秒重读 `.env`，检测到密钥后 `status` 恢复 `running` 并自动开始运行（无需重启）。不能在这里直接 `SystemExit`：进程退出会杀死服务线程，浏览器只剩一个连不上的死页面。
 - 流式实时思考：API 调用用 `stream=True`，思考增量（reasoning_content）实时打印到控制台，并原子写 `output/reasoning_live.json`（`{round, reasoning}`）供 web 轮询；一轮结束后由下一轮覆盖，运行结束删除。流式仅改变传输方式，不改变 token 计费，无额外成本。
 
 **客户端（web/index.html，原生 JS）**

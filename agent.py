@@ -80,13 +80,11 @@ def build_system_prompt(seed_value, seed_index):
 结束：当画布已足够好或点击次数将尽时，直接输出一段最终总结文字即可（不再调用工具）。"""
 
 
-def get_api_key():
-    """从 BASE/.env 读取 API 密钥（不依赖 cwd）"""
+def get_api_key_or_none():
+    """从 BASE/.env 读取 API 密钥（不依赖 cwd）；未配置返回 None。
+    重复调用会重读 .env：支持运行中补配密钥后热加载（等待配置逻辑依赖此行为）。"""
     load_dotenv(os.path.join(BASE, ".env"))
-    key = os.getenv("DEEPSEEK_API_KEY")
-    if not key:
-        raise SystemExit("错误：未在 .env 文件中找到 DEEPSEEK_API_KEY（模板见 env.example）")
-    return key
+    return os.getenv("DEEPSEEK_API_KEY") or None
 
 
 def assistant_message(msg):
@@ -291,7 +289,24 @@ def main():
     xor_world.snapshot(step, out_dir=OUT)  # 初始快照
     step += 1
 
-    client = OpenAI(api_key=get_api_key(), base_url="https://api.deepseek.com")
+    # 无密钥不退出：服务已启动，网页显示配置引导，后台轮询 .env，检测到密钥后自动开始。
+    # 不能在这里直接 SystemExit：进程退出会杀死服务线程，浏览器只剩一个连不上的死页面（原 bug 根因）。
+    api_key = get_api_key_or_none()
+    if api_key is None:
+        xor_world.state["status"] = "no_key"
+        xor_world.snapshot(step, out_dir=OUT)
+        step += 1
+        write_log("未找到 DEEPSEEK_API_KEY：进入等待配置状态（网页显示引导，配置后自动续跑，无需重启）", log_file)
+        print("未找到 DEEPSEEK_API_KEY：网页已显示配置引导。将 env.example 复制为 .env 并填写密钥，保存后自动继续。")
+        while api_key is None:
+            time.sleep(2)
+            api_key = get_api_key_or_none()
+        write_log("检测到 DEEPSEEK_API_KEY，自动开始运行", log_file)
+        xor_world.state["status"] = "running"
+        xor_world.snapshot(step, out_dir=OUT)
+        step += 1
+
+    client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
     messages = [{"role": "system", "content": build_system_prompt(args.seed, args.seed_index)}]
 
     click_count = 0
