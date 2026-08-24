@@ -47,7 +47,7 @@ agent.py 主循环 ──执行──▶ tools.py 分派 ──▶ xor_world.py�
 output/state.json + step_NNN.png
    │ ③ web 每 1 秒轮询
    ▼
-web/index.html（画布 / 热力图 / 指标折线 / 点击轨迹）
+web/index.html（画布 / 热力图 / 指标折线 / 决策过程：思考+点击）
 ```
 
 模块职责：
@@ -113,8 +113,9 @@ v1 曾以黑白平衡度 `1 - |黑像素占比 - 0.5| × 2`（渲染后数像素
 - 流式实时思考：API 调用用 `stream=True`，思考增量（reasoning_content）实时打印到控制台，并原子写 `output/reasoning_live.json`（`{round, reasoning}`）供 web 轮询；一轮结束后由下一轮覆盖，运行结束删除。流式仅改变传输方式，不改变 token 计费，无额外成本。
 
 **客户端（web/index.html，原生 JS）**
-- `setInterval(refresh, 1000)` 每 1 秒 `fetch('/output/state.json', {cache:'no-store'})`，拿到状态后整体重渲染；`refreshLive` 同频轮询 `/output/reasoning_live.json` 显示流式实时思考（文件不存在即隐藏面板）。
-- 渲染五块：当前画布（`<img>` 指向 state.image，加 `?t=时间戳` 防缓存）；参数热力图（canvas 2D，值 -64..63 映射色相，低值红、高值蓝）；黑白平衡度折线（canvas 2D）；点击轨迹时间线（按 round 分组、最新 15 组倒序，一组显示一次思考 + 该批格子，reasoning 经 `esc()` 转义防 HTML 注入）；实时思考面板（流式等待期间显示模型思考增量）。
+- `tick()`（`setInterval(tick, 1000)`）：先 `refreshLive` 更新打字机进度，再 `refresh` 读 `state.json` 整体重渲染，两者合并为一张卡（2026-08-24 布局定稿：一张卡优于"实时思考+轨迹"两张卡，见 context-log）。`fetch` 一律带 `{cache:'no-store'}`（HTML 响应头也 `Cache-Control: no-store`，浏览器缓存旧版页面会让前端修复不生效——实测多次踩坑）。
+- 实时思考显示：`refreshLive` 轮询 `/output/reasoning_live.json`（`{round, reasoning}`，运行结束删除），存在时**直接显示文件当前全文**——agent 每次收到 API 思考 delta 就写一次文件，前端随轮询看到新增内容，显示速度与终端（控制台实时打印）一致；曾用 60 字符/秒固定节流，实测真实 delta 更快导致 UI 落后于终端，已移除（AGENTS.md：实际 API 速度 ≠ 60 字符/秒）。轮次切换（round 变化）直接替换为新轮文本；文件不存在则清空，timeline 只剩已完成轮次。
+- 渲染四块：当前画布（`<img>` 指向 state.image，加 `?t=时间戳` 防缓存）；参数热力图（canvas 2D，值 -64..63 映射色相，低值红、高值蓝）；黑白平衡度折线（canvas 2D）；**AI 决策过程：思考 + 点击**（一张卡，按 round 分组、最新 20 组；进行中轮思考显示当前累积全文并标「思考中…」、历史轮显示完整思考，一组下面跟该批格子，reasoning 经 `esc()` 转义防 HTML 注入）。
 
 **为什么用"轮询文件"而不是实时推送**：主循环是同步的（一轮 = 一次 API 请求），每步落盘一次，与 1 秒轮询天然匹配，实现最简单。代价是刷新延迟 ≤1 秒，对观察 AI 的点击节奏足够。流式等待期间通过 `reasoning_live.json` 提供实时反馈——首次请求实测约 47 秒纯等待，无反馈会误以为卡死。
 

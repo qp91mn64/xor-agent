@@ -165,6 +165,11 @@ def chat_stream(client, messages, round_id):
                     if tc.function.arguments:
                         acc["arguments"] += tc.function.arguments
     print()  # 思考（若有）结束换行；无思考时也换行，避免与后续输出粘连
+    if reasoning:
+        # 兜底写：流式结束确保 reasoning_live.json 含本轮完整思考。
+        # 若 API 一次性返回 reasoning（非增量 delta），上面的增量写只发生在最后一瞬，
+        # web 1 秒轮询可能错过写入窗口；此处兜底保证文件必有内容（下一轮覆盖或结束清除）。
+        write_reasoning_live(round_id, reasoning)
     tool_calls = [
         SimpleNamespace(
             id=tool_acc[i]["id"], type="function",
@@ -219,6 +224,21 @@ class _Handler(SimpleHTTPRequestHandler):
         # 白名单：只有 /web/ 与 /output/ 前缀可达（规范化后，../ 已消解）
         if not (path.startswith("/web/") or path.startswith("/output/")):
             self.send_error(404)
+            return
+        if path.endswith(".html"):
+            # 页面禁用缓存：浏览器缓存旧版 HTML 会让前端修复不生效（实测多次踩坑），
+            # 重新导航/刷新页面必须拿到最新版；测试页（layout_*.html）同样适用
+            full = self.translate_path(self.path)
+            if not os.path.isfile(full):
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(os.path.getsize(full)))
+            self.end_headers()
+            with open(full, "rb") as f:
+                self.wfile.write(f.read())
             return
         super().do_GET()
 

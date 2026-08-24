@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>XOR 画布 · AI 选图案实时可视化</title>
 <style>
   :root { color-scheme: dark; }
@@ -14,15 +17,13 @@
   .card { background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 12px; }
   img#canvas-img { image-rendering: pixelated; border: 1px solid #444; }
   canvas { border: 1px solid #444; background: #000; }
-  #timeline { max-height: 400px; overflow-y: auto; width: 420px; font-size: 12px; }
+  #timeline { max-height: 460px; overflow-y: auto; width: 480px; font-size: 12px; }
   .group { border-bottom: 1px dashed #333; padding: 4px 0; }
   .ghead { color: #9cf; font-weight: bold; }
   .cells { margin: 2px 0; }
   .cell b { color: #fc9; }
   .prev { color: #888; }
   .why { color: #8c8; margin-top: 2px; white-space: pre-wrap; }
-  #live-box { display: none; width: 420px; font-size: 12px; }
-  #live-text { white-space: pre-wrap; color: #8c8; max-height: 200px; overflow-y: auto; }
 </style>
 </head>
 <body>
@@ -36,27 +37,31 @@
   <div class="card"><h2>当前画布（512×512）</h2><img id="canvas-img" alt="" width="512" height="512"></div>
   <div class="card"><h2>参数热力图（值 -64..63：低红高蓝）</h2><canvas id="heatmap" width="256" height="256"></canvas></div>
   <div class="card"><h2>黑白平衡度演化（0..1）</h2><canvas id="chart" width="480" height="160"></canvas></div>
-  <div class="card"><h2>AI 点击轨迹（按轮分组，最新 15 轮）</h2><div id="timeline"></div></div>
-  <div class="card"><h2>实时思考（流式）</h2><div id="live-box"><div id="live-text"></div></div></div>
+  <div class="card"><h2>AI 决策过程：思考 + 点击</h2><div id="timeline"></div></div>
 </div>
 <script>
 const $ = id => document.getElementById(id);
+// 实时思考：轮询 output/reasoning_live.json（agent 流式等待期间写，运行结束删除）。
+// 显示跟随文件增量：agent 每次收到 API 思考 delta 就写一次文件，前端轮询显示文件当前
+// 全文 → 新增内容随 delta 逐段出现，速度与终端（控制台实时打印）一致。
+// 不用固定节流：曾设 60 字符/秒打字机，实测真实 delta 更快，UI 落后于终端（AGENTS.md）。
+// 轮次切换（round 变化）时直接替换为新轮文本。
+let liveRound = -1, liveText = '';
+async function refreshLive() {
+  try {
+    const r = await fetch('/output/reasoning_live.json', { cache: 'no-store' });
+    if (!r.ok) { liveRound = -1; liveText = ''; return; }
+    const d = await r.json();
+    liveRound = d.round;
+    liveText = d.reasoning || '';
+  } catch (e) { liveRound = -1; liveText = ''; }
+}
 async function refresh() {
   try {
     const r = await fetch('/output/state.json', { cache: 'no-store' });
     if (!r.ok) return;
     render(await r.json());
   } catch (e) { /* 服务未就绪 */ }
-}
-async function refreshLive() {
-  // 实时思考：agent 流式等待期间写 reasoning_live.json，文件不存在则隐藏面板
-  try {
-    const r = await fetch('/output/reasoning_live.json', { cache: 'no-store' });
-    if (!r.ok) { $('live-box').style.display = 'none'; return; }
-    const d = await r.json();
-    $('live-box').style.display = '';
-    $('live-text').textContent = `第 ${d.round} 轮思考中：\n${d.reasoning}`;
-  } catch (e) { }
 }
 function render(s) {
   const nokey = s.status === 'no_key';
@@ -110,7 +115,8 @@ function drawChart(hist) {
   ctx.stroke();
 }
 function drawTimeline(clicks) {
-  // 按 round 分组：同一轮（一次 API 请求）的多次点击共享一次思考，合并显示
+  // 按 round 分组：同一轮（一次 API 请求）的多次点击共享一次思考，合并显示。
+  // 进行中轮（reasoning_live 有内容）的思考显示当前累积全文（跟随 delta 到达）；历史轮显示完整思考。
   const groups = [];
   for (const c of clicks) {
     const last = groups[groups.length - 1];
@@ -120,23 +126,40 @@ function drawTimeline(clicks) {
       groups.push({ round: c.round, reasoning: c.reasoning || '', items: [c] });
     }
   }
-  const html = groups.slice(-15).reverse().map(g =>
-    '<div class="group">' +
-    `<div class="ghead">第 ${g.round ?? '?'} 轮 · ${g.items.length} 格</div>` +
-    (g.reasoning ? `<div class="why">思考: ${esc(g.reasoning)}</div>` : '') +
-    '<div class="cells">' + g.items.map(c =>
-      `#${c.index}→<b>${c.value}</b><span class="prev">(原${c.prev})</span>`
-    ).join(' ') + '</div></div>'
-  ).join('');
-  $('timeline').innerHTML = html || '<div style="color:#888">暂无点击</div>';
+  const parts = [];
+  for (const g of groups.slice(-20)) {
+    const isLive = liveRound > 0 && g.round === liveRound;
+    const reason = isLive ? liveText : g.reasoning;
+    const head = `第 ${g.round ?? '?'} 轮 · ${g.items.length} 格` + (isLive ? ' · 思考中…' : '');
+    parts.push(
+      '<div class="group">' +
+      `<div class="ghead">${head}</div>` +
+      (reason ? `<div class="why">${esc(reason)}</div>` : '') +
+      '<div class="cells">' + g.items.map(c =>
+        `#${c.index}→<b>${c.value}</b><span class="prev">(原${c.prev})</span>`
+      ).join(' ') + '</div></div>'
+    );
+  }
+  // 当前轮还没有任何点击（刚开新一轮，或 evaluate/view 轮）：单独追加一组，实时显示思考
+  if (liveRound > 0 && !groups.some(g => g.round === liveRound)) {
+    parts.push(
+      '<div class="group">' +
+      `<div class="ghead">第 ${liveRound} 轮 · 0 格 · 思考中…</div>` +
+      (liveText ? `<div class="why">${esc(liveText)}</div>` : '') +
+      '</div>'
+    );
+  }
+  $('timeline').innerHTML = parts.join('') || '<div style="color:#888">暂无数据</div>';
 }
 function esc(s) {
   return (s || '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
-setInterval(refresh, 1000);
-setInterval(refreshLive, 1000);
-refresh();
-refreshLive();
+async function tick() {
+  await refreshLive();  // 先更新打字机进度，timeline 渲染依赖 liveText
+  await refresh();
+}
+setInterval(tick, 1000);
+tick();
 </script>
 </body>
 </html>
