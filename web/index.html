@@ -40,12 +40,43 @@
 </div>
 <script>
 const $ = id => document.getElementById(id);
-// 实时思考：轮询 output/reasoning_live.json（agent 流式等待期间写，运行结束删除）。
-// 显示跟随文件增量：agent 每次收到 API 思考 delta 就写一次文件，前端轮询显示文件当前
-// 全文 → 新增内容随 delta 逐段出现，速度与终端（控制台实时打印）一致。
-// 不用固定节流：曾设 60 字符/秒打字机，实测真实 delta 更快，UI 落后于终端（AGENTS.md）。
-// 轮次切换（round 变化）时直接替换为新轮文本。
+// --- SSE 实时推送（主通道） ---
+// agent 端 /events 端点：每个思考 delta 到达即推 reasoning 事件（含轮次与全文），
+// 每次快照即推 state 事件（画布状态全文）。显示速度 = delta 到达速度 = 终端速度。
+// 轮询降为 3s 兜底：EventSource 断线自动重连，重连间隙靠轮询保证最终一致。
 let liveRound = -1, liveText = '';
+let lastState = null;
+let pendingRender = false;
+const es = new EventSource('/events');
+es.addEventListener('reasoning', e => {
+  const d = JSON.parse(e.data);
+  liveRound = d.round;
+  liveText = d.reasoning || '';
+  scheduleRender();
+});
+es.addEventListener('state', e => {
+  lastState = JSON.parse(e.data);
+  scheduleRender();
+});
+function scheduleRender() {
+  // requestAnimationFrame 合并渲染：delta 频率高于 60fps 时只渲染最新状态
+  if (pendingRender) return;
+  pendingRender = true;
+  requestAnimationFrame(() => { pendingRender = false; if (lastState) render(lastState); });
+}
+// --- 智能跟随滚动 ---
+// autoFollow=true（容器距底 < 40px）：新内容渲染后自动滚到底，看最新不用手动翻。
+// 用户翻历史（滚离底部）→ autoFollow=false 暂停跟随，内容照常追加、不打扰；
+// 滚回底部附近（距底 < 40px）自动恢复跟随。
+const TIMELINE = $('timeline');
+let autoFollow = true;
+let lastImage = '';  // 图片按需刷新：画布快照名变化才重载 512×512 PNG
+TIMELINE.addEventListener('scroll', () => {
+  autoFollow = TIMELINE.scrollHeight - TIMELINE.scrollTop - TIMELINE.clientHeight < 40;
+});
+function scrollToBottomIfFollow() {
+  if (autoFollow) TIMELINE.scrollTop = TIMELINE.scrollHeight;
+}
 async function refreshLive() {
   try {
     const r = await fetch('/output/reasoning_live.json', { cache: 'no-store' });
@@ -59,7 +90,9 @@ async function refresh() {
   try {
     const r = await fetch('/output/state.json', { cache: 'no-store' });
     if (!r.ok) return;
-    render(await r.json());
+    const s = await r.json();
+    lastState = s;  // 兜底轮询与 SSE 共用 lastState，页面初始化/重连间隙保证有状态
+    render(s);
   } catch (e) { /* 服务未就绪 */ }
 }
 function render(s) {
@@ -69,7 +102,10 @@ function render(s) {
     ? '状态: 等待配置 DEEPSEEK_API_KEY'
     : `状态: ${s.status} · 点击 ${s.clicks.length} 次` +
       (s.final_reason ? ` · 结束原因: ${s.final_reason}` : '');
-  $('canvas-img').src = s.image + '?t=' + Date.now();
+  if (s.image !== lastImage) {  // 快照名变才重载图片：轮询加速后避免每次重载 512×512 PNG
+    lastImage = s.image;
+    $('canvas-img').src = s.image + '?t=' + Date.now();
+  }
   drawHeatmap(s.grid, s.seed_index);
   drawTimeline(s.clicks);
 }
@@ -128,16 +164,17 @@ function drawTimeline(clicks) {
     );
   }
   $('timeline').innerHTML = parts.join('') || '<div style="color:#888">暂无数据</div>';
+  scrollToBottomIfFollow();  // 新内容渲染后：在底部则跟随到底，翻历史则保持不动
 }
 function esc(s) {
   return (s || '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
 async function tick() {
-  await refreshLive();  // 先更新打字机进度，timeline 渲染依赖 liveText
+  await refreshLive();  // 兜底轮询思考：SSE 断线重连间隙的最终一致
   await refresh();
 }
-setInterval(tick, 1000);
-tick();
+setInterval(tick, 3000);  // 兜底低频轮询（SSE 为主通道，实时推送；断线重连间隙靠它兜底）
+tick();  // 页面初始加载拉一次全量（SSE 无历史事件）
 </script>
 </body>
 </html>

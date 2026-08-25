@@ -38,7 +38,7 @@ xor-agent/
 ├── tools.py                # set_region / view_region / evaluate 工具
 ├── logger.py               # 日志（复用 test-agent，MIT）
 ├── selftest.py             # 离线自测（不依赖 API）
-├── web/index.html          # 实时决策可视化页（原生 JS，轮询 state.json）
+├── web/index.html          # 实时决策可视化页（原生 JS，SSE 订阅 /events 实时渲染）
 ├── context-log/            # 排查/实测记录（一个主题一个文件）
 ├── Interactive Drawing XOR.html  # 原始画布作品
 ├── requirements.txt / env.example / .gitignore

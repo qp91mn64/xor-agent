@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import posixpath
+import queue
 import socketserver
 import sys
 import threading
@@ -61,6 +62,24 @@ OUT = os.path.join(BASE, "output")
 
 # 实时思考中间文件：流式等待期间 web 轮询显示，本轮结束删除
 REASONING_LIVE = os.path.join(OUT, "reasoning_live.json")
+
+# --- SSE 长连接推送（实时可视化主通道） ---
+# EventSource 单向推送：思考 delta / 快照更新到达即推给浏览器，前端无需高频轮询。
+# 每个连接一个队列，广播时只保留最新事件（快照语义，丢弃中间版本无妨）。
+_sse_lock = threading.Lock()
+_sse_clients = set()  # {queue.Queue}
+
+
+def _sse_broadcast(event, data):
+    """向所有 SSE 连接广播一个事件；data 会 json 序列化（单行，无裸换行，SSE data 行安全）"""
+    payload = f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    with _sse_lock:
+        for q in list(_sse_clients):
+            try:
+                q.get_nowait()  # 丢弃旧事件，只留最新
+            except queue.Empty:
+                pass
+            q.put_nowait(payload)
 
 
 def build_system_prompt(seed_value, seed_index):
@@ -110,7 +129,7 @@ def assistant_message(msg):
 
 
 def write_reasoning_live(round_id, reasoning):
-    """原子写 output/reasoning_live.json（web 轮询显示实时思考）；文件不存在时 web 隐藏该面板"""
+    """原子写 output/reasoning_live.json（web 兜底轮询显示实时思考）并 SSE 推送；文件不存在时 web 隐藏该面板"""
     try:
         os.makedirs(OUT, exist_ok=True)
         payload = json.dumps({"round": round_id, "reasoning": reasoning}, ensure_ascii=False)
@@ -118,6 +137,7 @@ def write_reasoning_live(round_id, reasoning):
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(payload)
         os.replace(tmp, REASONING_LIVE)
+        _sse_broadcast("reasoning", {"round": round_id, "reasoning": reasoning})
     except OSError:
         pass
 
@@ -127,6 +147,7 @@ def clear_reasoning_live():
         os.remove(REASONING_LIVE)
     except OSError:
         pass
+    _sse_broadcast("reasoning", {"round": -1, "reasoning": ""})
 
 
 def chat_stream(client, messages, round_id):
@@ -198,6 +219,8 @@ def _is_sensitive_path(path):
 
 class _Handler(SimpleHTTPRequestHandler):
     """最小暴露：只放行 web/ 与 output/ 两个子目录的文件（/ 映射到 /web/index.html），其余一律 404；目录请求也 404，避免列目录枚举文件"""
+    # HTTP/1.1：SSE 长连接必需（HTTP/1.0 无标准 keep-alive 流）；静态响应均带 Content-Length，兼容连接复用
+    protocol_version = "HTTP/1.1"
 
     def __init__(self, *args, directory=None, **kwargs):
         super().__init__(*args, directory=directory, **kwargs)
@@ -207,6 +230,9 @@ class _Handler(SimpleHTTPRequestHandler):
         # 未解码路径上的白名单与敏感检查，translate_path 解码 normpath 后落到根目录文件
         # （实测可下载 .env 与 agent.py 源码，见 context-log/2026-08-22_HTTP路径穿越密钥泄露.md）
         raw = urllib.parse.unquote(self.path.split("?")[0])
+        if raw == "/events":
+            self._serve_sse()
+            return
         if raw.endswith("/") and raw != "/":  # 目录请求一律 404（含编码的 /web/%2e%2e/ 等）
             self.send_error(404)
             return
@@ -242,12 +268,38 @@ class _Handler(SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def _serve_sse(self):
+        """SSE 长连接：浏览器 EventSource 订阅，接收 reasoning（思考增量）与 state（快照）事件。
+        每连接一个队列 + 专用线程阻塞消费；空闲 15s 发注释心跳保活。"""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        q = queue.Queue()
+        with _sse_lock:
+            _sse_clients.add(q)
+        try:
+            while True:
+                try:
+                    payload = q.get(timeout=15)
+                except queue.Empty:
+                    payload = ": heartbeat\n\n"  # 空闲保活，防中间层/浏览器超时
+                try:
+                    self.wfile.write(payload.encode("utf-8"))
+                    self.wfile.flush()
+                except OSError:
+                    break  # 浏览器刷新/关闭连接，正常退出
+        finally:
+            with _sse_lock:
+                _sse_clients.discard(q)
+
     def log_message(self, *args):
         pass  # 静默访问日志
 
 
 class _Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = False  # Windows 端口复用坑：固定端口 fallback 必须（见常量区注释）
+    daemon_threads = True  # SSE 长连接线程随进程退出，否则 main 结束后脚本挂住不退出
 
     def handle_error(self, request, client_address):
         """浏览器在响应中途关闭/刷新连接（WinError 10053/10054、BrokenPipe）属正常现象，
@@ -281,6 +333,12 @@ def parse_args():
     p.add_argument("--detailed", action="store_true",
                    help="详细日志（模型思考+工具调用原文）；也可用环境变量 DETAILED_LOG=1/true/yes 开启")
     return p.parse_args()
+
+
+def snap(step):
+    """快照 + SSE 广播 state（web 实时收到更新，无需轮询等文件）"""
+    xor_world.snapshot(step, out_dir=OUT)
+    _sse_broadcast("state", xor_world.state)
 
 
 def main():
@@ -319,7 +377,7 @@ def main():
         write_log(f"自动打开浏览器（--no-open 可关闭）：{'成功' if opened else '失败'}", log_file)
 
     step = 0
-    xor_world.snapshot(step, out_dir=OUT)  # 初始快照
+    snap(step)  # 初始快照
     step += 1
 
     # 无密钥不退出：服务已启动，网页显示配置引导，后台轮询 .env，检测到密钥后自动开始。
@@ -327,7 +385,7 @@ def main():
     api_key = get_api_key_or_none()
     if api_key is None:
         xor_world.state["status"] = "no_key"
-        xor_world.snapshot(step, out_dir=OUT)
+        snap(step)
         step += 1
         write_log("未找到 DEEPSEEK_API_KEY：进入等待配置状态（网页显示引导，配置后自动续跑，无需重启）", log_file)
         print("未找到 DEEPSEEK_API_KEY：网页已显示配置引导。将 env.example 复制为 .env 并填写密钥，保存后自动继续。")
@@ -336,7 +394,7 @@ def main():
             api_key = get_api_key_or_none()
         write_log("检测到 DEEPSEEK_API_KEY，自动开始运行", log_file)
         xor_world.state["status"] = "running"
-        xor_world.snapshot(step, out_dir=OUT)
+        snap(step)
         step += 1
 
     client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
@@ -386,7 +444,7 @@ def main():
             log_tool_call(name, tc.id, arguments, result, log_file)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
-            xor_world.snapshot(step, out_dir=OUT)  # 每次工具调用后刷新可视化快照
+            snap(step)  # 每次工具调用后刷新可视化快照（快照 + SSE 广播）
             step += 1
 
             if name == "set_region":
@@ -414,7 +472,7 @@ def main():
     success = coverage == xor_world.ROWS * xor_world.COLS - 1  # 63 个非种子区域
     xor_world.state["status"] = "success" if success else "incomplete"
     xor_world.state["final_reason"] = reason or "达到循环上限"
-    xor_world.snapshot(step, out_dir=OUT)
+    snap(step)
     result_text = (
         f"{'成功' if success else '失败'}：{reason or '达到循环上限'}。"
         f"已点击 {coverage}/63 个非种子区域。"
