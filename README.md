@@ -29,6 +29,7 @@ python agent.py --seed 5 --detailed         # 运行；自动打开可视化页�
 
 ```
 xor-agent/
+├── .trae/skills/           # 项目内部 skill：可复用方法论（browser-ui-test：用探针脚本的浏览器 UI 测试 skill）
 ├── TECH_DESIGN.md           # 技术设计（背景与决策/整体架构/关键机制/实验）
 ├── DEPENDENCIES.md          # 依赖与许可证
 ├── agent.py                # Agent 主循环 + 内嵌可视化 HTTP 服务
