@@ -18,6 +18,13 @@
   img#canvas-img { image-rendering: pixelated; border: 1px solid #444; }
   canvas { border: 1px solid #444; background: #000; }
   #timeline { max-height: 460px; overflow-y: auto; width: 480px; font-size: 12px; }
+  #timeline-box { position: relative; }
+  #follow-btn {
+    position: absolute; right: 8px; bottom: 8px; z-index: 2;
+    background: #2a7; color: #0a0a0a; border: none; border-radius: 4px;
+    padding: 3px 10px; font-size: 12px; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,.6);
+  }
+  #follow-btn:hover { background: #3c9; }
   .group { border-bottom: 1px dashed #333; padding: 4px 0; }
   .ghead { color: #9cf; font-weight: bold; }
   .cells { margin: 2px 0; }
@@ -36,7 +43,7 @@
 <div class="cards">
   <div class="card"><h2>当前画布（512×512）</h2><img id="canvas-img" alt="" width="512" height="512"></div>
   <div class="card"><h2>参数热力图（值 -64..63：低红高蓝）</h2><canvas id="heatmap" width="256" height="256"></canvas></div>
-  <div class="card"><h2>AI 决策过程：思考 + 点击</h2><div id="timeline"></div></div>
+  <div class="card"><h2>AI 决策过程：思考 + 点击</h2><div id="timeline-box"><div id="timeline"></div><button id="follow-btn" hidden>↓ 回到底部</button></div></div>
 </div>
 <script>
 const $ = id => document.getElementById(id);
@@ -65,18 +72,37 @@ function scheduleRender() {
   requestAnimationFrame(() => { pendingRender = false; if (lastState) render(lastState); });
 }
 // --- 智能跟随滚动 ---
-// autoFollow=true（容器距底 < 40px）：新内容渲染后自动滚到底，看最新不用手动翻。
-// 用户翻历史（滚离底部）→ autoFollow=false 暂停跟随，内容照常追加、不打扰；
-// 滚回底部附近（距底 < 40px）自动恢复跟随。
+// autoFollow=true：新内容渲染后自动滚到底，看最新不用手动翻。
+// 暂停：向上滚动且距底 >= 40px（PAUSE_DIST）→ 暂停跟随，内容照常追加、不打扰；
+// 恢复：向下滚动且距底 < 150px（RESUME_DIST）→ 恢复跟随（方向感知，避免"内容持续追加、底部是移动靶"时够不到底）；
+// 兜底：暂停时时间线右下角浮现「↓ 回到底部」按钮，点击必回底并恢复跟随。
 const TIMELINE = $('timeline');
+const PAUSE_DIST = 40;    // 距底 >= 此值且向上滚 → 暂停跟随
+const RESUME_DIST = 150;  // 距底 < 此值且向下滚 → 恢复跟随
 let autoFollow = true;
-let lastImage = '';  // 图片按需刷新：画布快照名变化才重载 512×512 PNG
+let lastScrollTop = 0;  // 记录最近一次滚动位置以判断方向；程序化滚动时同步更新，防方向误判
+let lastImage = '';     // 图片按需刷新：画布快照名变化才重载 512×512 PNG
 TIMELINE.addEventListener('scroll', () => {
-  autoFollow = TIMELINE.scrollHeight - TIMELINE.scrollTop - TIMELINE.clientHeight < 40;
+  const dist = TIMELINE.scrollHeight - TIMELINE.scrollTop - TIMELINE.clientHeight;
+  const dirDown = TIMELINE.scrollTop > lastScrollTop;
+  lastScrollTop = TIMELINE.scrollTop;
+  if (dirDown) { if (dist < RESUME_DIST) autoFollow = true; }
+  else { if (dist >= PAUSE_DIST) autoFollow = false; }
+  $('follow-btn').hidden = autoFollow;
 });
 function scrollToBottomIfFollow() {
-  if (autoFollow) TIMELINE.scrollTop = TIMELINE.scrollHeight;
+  if (autoFollow) {
+    TIMELINE.scrollTop = TIMELINE.scrollHeight;
+    lastScrollTop = TIMELINE.scrollTop;
+  }
+  $('follow-btn').hidden = autoFollow;
 }
+$('follow-btn').addEventListener('click', () => {
+  autoFollow = true;
+  TIMELINE.scrollTop = TIMELINE.scrollHeight;
+  lastScrollTop = TIMELINE.scrollTop;
+  $('follow-btn').hidden = true;
+});
 async function refreshLive() {
   try {
     const r = await fetch('/output/reasoning_live.json', { cache: 'no-store' });
