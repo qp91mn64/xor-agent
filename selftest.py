@@ -146,11 +146,11 @@ def main():
     assert 0.0 <= br <= 1.0
     print(f"渲染 OK, shape={canvas.shape}, 黑占比={br:.3f}")
 
-    # 5. 全填 a=1（细棋盘格，黑白各半）→ 指标应为 1.0
+    # 5. 全填 a=1（细棋盘格，黑白各半）→ 黑占比应恰为 0.5（渲染正确性验证）
     xor_world.state["grid"] = [1] * 64
-    m = xor_world.metric()
-    assert abs(m - 1.0) < 1e-6, f"全 a=1 应满分: {m}"
-    print(f"指标 OK: 全 a=1 → {m:.4f}")
+    br = xor_world.black_ratio()
+    assert abs(br - 0.5) < 1e-6, f"全 a=1 黑占比应 0.5: {br}"
+    print(f"渲染验证 OK: 全 a=1 → 黑占比 {br:.4f}")
 
     # 6. 图案语义字典抽查
     assert "纯黑" in xor_world.pattern_description(0)

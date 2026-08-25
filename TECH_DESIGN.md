@@ -26,7 +26,7 @@
 | 交互粒度 | 逐格点击（set_region/evaluate） | 最忠实于"模拟点击"；与 test-agent 的 move/view 同构，主循环可整体复用 |
 | 评价闭环 | 意图自检（生成范式）：描述→选值→view_region 回显核对 | 忠于原始问题"根据图案描述选图案"，无需量化目标 |
 | 图案描述 | pattern_description.md（手写参考，运行时读入系统提示词）+ pattern_desc.py 程序化描述 | 单一来源，AI 拿到详细图案语义后自行设计 |
-| 指标 | 无（黑白平衡度仅作快照记录，供可视化旁观） | v1 曾作 AI 目标，实测刷指标作弊（见下），2026-08-07 移除 |
+| 指标 | 无（黑白平衡度 2026-08-25 已完全移除） | v1 曾作 AI 目标，实测刷指标作弊（见下），2026-08-07 移除 AI 目标；2026-08-25 删除快照记录与前端展示 |
 | 种子约束 | 保留（用户给 1 个初始值，AI 填其余；区域编号 `--seed-index` 0-63，默认 0） | 忠于原始问题 |
 | 决策可视化 | 实时网页（stdlib http.server + 原生 JS 轮询） | 零新框架、零 CDN |
 | 技术栈 | Python | 复用 test-agent 的 agent.py/logger.py/tools.py 模式 |
@@ -34,20 +34,20 @@
 
 ## 二、整体架构
 
-**一句话**：DeepSeek API ↔ `agent.py` 主循环 → `tools.py` 工具分派 → `xor_world.py`（状态/渲染/指标）→ `output/` 快照 → `web/index.html` 轮询可视化。
+**一句话**：DeepSeek API ↔ `agent.py` 主循环 → `tools.py` 工具分派 → `xor_world.py`（状态/渲染）→ `output/` 快照 → `web/index.html` 轮询可视化。
 
 ```
 AI（DeepSeek function calling）
    │ ① 调用工具（set_region / view_region / evaluate）
    ▼
-agent.py 主循环 ──执行──▶ tools.py 分派 ──▶ xor_world.py（改 grid / 渲染 / 算指标）
+agent.py 主循环 ──执行──▶ tools.py 分派 ──▶ xor_world.py（改 grid / 渲染）
    │                        │
    │ ② 每步 snapshot()       └── 返回结果文本 ──▶ 回填 messages，进入下一轮
    ▼
 output/state.json + step_NNN.png
    │ ③ web 每 1 秒轮询
    ▼
-web/index.html（画布 / 热力图 / 指标折线 / 决策过程：思考+点击）
+web/index.html（画布 / 热力图 / 决策过程：思考+点击）
 ```
 
 模块职责：
@@ -56,7 +56,7 @@ web/index.html（画布 / 热力图 / 指标折线 / 决策过程：思考+点�
 |---|---|
 | `agent.py` | 主循环：API 调用、assistant_message 回填、终止条件、成功判定；内嵌 stdlib HTTP 服务 |
 | `tools.py` | 工具 schema（发给模型）与 execute_tool 执行分派 |
-| `xor_world.py` | 世界：网格状态、numpy 渲染、指标记录（旁观）、种子锁定、快照 |
+| `xor_world.py` | 世界：网格状态、numpy 渲染、种子锁定、快照 |
 | `pattern_desc.py` | 图案语义单一来源：读 pattern_description.md + 单值程序化描述 |
 | `logger.py` | 时间戳日志（复用 test-agent，MIT） |
 | `web/index.html` | 轮询 state.json 并渲染（原生 JS，无框架） |
@@ -97,7 +97,7 @@ web/index.html（画布 / 热力图 / 指标折线 / 决策过程：思考+点�
 
 v1 曾以黑白平衡度 `1 - |黑像素占比 - 0.5| × 2`（渲染后数像素，精确）作为 AI 的优化目标，为的是给"评价闭环"一个可量化的信号。**已知坑（诚实记录）**：单指标存在作弊解——任一单一位值（1/2/4/8/16/32，黑白各半）即可满分。2026-08-05 实测证实：两轮运行均以 1.000 满分收尾，产出图案单调（"1,2,4,8,16,32 循环渐变"和"大片 a=1 + 单个 15"）。
 
-这与原始问题（"根据图案描述选图案"）相悖：AI 不是在选图案，而是在刷分数。2026-08-07 回到生成范式：指标不再是 AI 目标，`evaluate` 只报进度；`metric()`/`metric_history` 保留，仅作快照记录供可视化旁观。
+这与原始问题（"根据图案描述选图案"）相悖：AI 不是在选图案，而是在刷分数。2026-08-07 回到生成范式：指标不再是 AI 目标，`evaluate` 只报进度。2026-08-25 决策：意图自检范式下黑白平衡度是噪音（AI 不关心它、也不反映绘画质量），`metric()`/`metric_history` 与前端曲线卡片、状态栏数字一并删除；`black_ratio()` 保留，仅作 selftest 的渲染正确性验证（全 a=1 黑占比应为 0.5）。
 
 ### 实时可视化
 
@@ -108,14 +108,14 @@ v1 曾以黑白平衡度 `1 - |黑像素占比 - 0.5| × 2`（渲染后数像素
 - 路径白名单：`/` 或 `/index.html` 改写为 `/web/index.html`；只放行 `/web/` 与 `/output/` 前缀的文件，以 `/` 结尾的目录请求一律 404（不列目录、不枚举文件），其余路径一律 404——所以 `/output/step_003.png`、`/output/state.json` 可直接 fetch，而 `.env`、`*.py` 等根目录文件不可达。
 - 敏感文件拒绝（白名单之外的第二道防线）：`.env` 等点文件、`*.log`、`probe_*`/`_` 前缀的探针临时脚本一律返回 404，防止密钥/日志被本机 HTTP 下载（`_is_sensitive_path`）。`do_GET` 先 `unquote` 再 `normpath` 再检查，URL 编码的路径穿越（`%2e%2e`=`.`/`..`、`%2eenv`=`.env`、嵌套 `%252e`）与含 ASCII 控制字符（`%00`/`%0a`）的路径同样 404（实测可下载 `.env`，见 context-log/2026-08-22_HTTP路径穿越密钥泄露.md）。
 - 自动打开浏览器：启动后 `webbrowser.open(url)`（`--no-open` 可关），避免思考流把网址刷出视野。
-- `xor_world.snapshot(step)`：**每次工具调用后**渲染 512×512 PNG → 写 `output/step_NNN.png`；更新 `state["image"]`（URL 路径）；指标追加进 `metric_history`；写 `output/state.json`（含 grid、seed_index、seed_value、clicks（每条含 reasoning、round）、metric_history、status、final_reason、image）。启动时先做一次 step 0 快照。
+- `xor_world.snapshot(step)`：**每次工具调用后**渲染 512×512 PNG → 写 `output/step_NNN.png`；更新 `state["image"]`（URL 路径）；写 `output/state.json`（含 grid、seed_index、seed_value、clicks（每条含 reasoning、round）、status、final_reason、image）。启动时先做一次 step 0 快照。
 - 无密钥不退出：启动后若 `.env` 未配置 `DEEPSEEK_API_KEY`，不报错退出——`state["status"]` 置为 `no_key` 并快照，网页显示配置引导（复制 env.example 填 key）；主线程每 2 秒重读 `.env`，检测到密钥后 `status` 恢复 `running` 并自动开始运行（无需重启）。不能在这里直接 `SystemExit`：进程退出会杀死服务线程，浏览器只剩一个连不上的死页面。
 - 流式实时思考：API 调用用 `stream=True`，思考增量（reasoning_content）实时打印到控制台，并原子写 `output/reasoning_live.json`（`{round, reasoning}`）供 web 轮询；一轮结束后由下一轮覆盖，运行结束删除。流式仅改变传输方式，不改变 token 计费，无额外成本。
 
 **客户端（web/index.html，原生 JS）**
 - `tick()`（`setInterval(tick, 1000)`）：先 `refreshLive` 更新打字机进度，再 `refresh` 读 `state.json` 整体重渲染，两者合并为一张卡（2026-08-24 布局定稿：一张卡优于"实时思考+轨迹"两张卡，见 context-log）。`fetch` 一律带 `{cache:'no-store'}`（HTML 响应头也 `Cache-Control: no-store`，浏览器缓存旧版页面会让前端修复不生效——实测多次踩坑）。
 - 实时思考显示：`refreshLive` 轮询 `/output/reasoning_live.json`（`{round, reasoning}`，运行结束删除），存在时**直接显示文件当前全文**——agent 每次收到 API 思考 delta 就写一次文件，前端随轮询看到新增内容，显示速度与终端（控制台实时打印）一致；曾用 60 字符/秒固定节流，实测真实 delta 更快导致 UI 落后于终端，已移除（AGENTS.md：实际 API 速度 ≠ 60 字符/秒）。轮次切换（round 变化）直接替换为新轮文本；文件不存在则清空，timeline 只剩已完成轮次。
-- 渲染四块：当前画布（`<img>` 指向 state.image，加 `?t=时间戳` 防缓存）；参数热力图（canvas 2D，值 -64..63 映射色相，低值红、高值蓝）；黑白平衡度折线（canvas 2D）；**AI 决策过程：思考 + 点击**（一张卡，按 round 分组、最新 20 组；进行中轮思考显示当前累积全文并标「思考中…」、历史轮显示完整思考，一组下面跟该批格子，reasoning 经 `esc()` 转义防 HTML 注入）。
+- 渲染三块：当前画布（`<img>` 指向 state.image，加 `?t=时间戳` 防缓存）；参数热力图（canvas 2D，值 -64..63 映射色相，低值红、高值蓝）；**AI 决策过程：思考 + 点击**（一张卡，按 round 分组、最新 20 组；进行中轮思考显示当前累积全文并标「思考中…」、历史轮显示完整思考，一组下面跟该批格子，reasoning 经 `esc()` 转义防 HTML 注入）。
 
 **为什么用"轮询文件"而不是实时推送**：主循环是同步的（一轮 = 一次 API 请求），每步落盘一次，与 1 秒轮询天然匹配，实现最简单。代价是刷新延迟 ≤1 秒，对观察 AI 的点击节奏足够。流式等待期间通过 `reasoning_live.json` 提供实时反馈——首次请求实测约 47 秒纯等待，无反馈会误以为卡死。
 

@@ -23,7 +23,7 @@ python agent.py --seed 5 --detailed         # 运行；自动打开可视化页�
 ```
 未配置 `DEEPSEEK_API_KEY` 时程序不退出：服务照常启动，网页显示配置引导，填好保存后自动开始运行（无需重启）。
 
-打开浏览器访问打印的网址，可实时看到 AI 每次"点击"后的画布、参数热力图、黑白平衡度演化与 AI 思考（决策可视化；等待模型响应时，控制台与网页实时显示思考过程）。
+打开浏览器访问打印的网址，可实时看到 AI 每次"点击"后的画布、参数热力图与 AI 思考（决策可视化；等待模型响应时，控制台与网页实时显示思考过程）。
 
 ## 结构
 
@@ -32,7 +32,7 @@ xor-agent/
 ├── TECH_DESIGN.md           # 技术设计（背景与决策/整体架构/关键机制/实验）
 ├── DEPENDENCIES.md          # 依赖与许可证
 ├── agent.py                # Agent 主循环 + 内嵌可视化 HTTP 服务
-├── xor_world.py            # XOR 画布世界：状态/渲染/指标记录/快照
+├── xor_world.py            # XOR 画布世界：状态/渲染/快照
 ├── pattern_desc.py         # 图案语义单一来源：读 pattern_description.md + 程序化描述
 ├── pattern_description.md  # 图案语义参考文档（手写，AI 的设计依据）
 ├── tools.py                # set_region / view_region / evaluate 工具

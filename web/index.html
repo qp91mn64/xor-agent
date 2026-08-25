@@ -36,7 +36,6 @@
 <div class="cards">
   <div class="card"><h2>当前画布（512×512）</h2><img id="canvas-img" alt="" width="512" height="512"></div>
   <div class="card"><h2>参数热力图（值 -64..63：低红高蓝）</h2><canvas id="heatmap" width="256" height="256"></canvas></div>
-  <div class="card"><h2>黑白平衡度演化（0..1）</h2><canvas id="chart" width="480" height="160"></canvas></div>
   <div class="card"><h2>AI 决策过程：思考 + 点击</h2><div id="timeline"></div></div>
 </div>
 <script>
@@ -66,14 +65,12 @@ async function refresh() {
 function render(s) {
   const nokey = s.status === 'no_key';
   $('nokey').style.display = nokey ? '' : 'none';
-  const last = s.metric_history.length ? s.metric_history[s.metric_history.length - 1] : 0;
   $('status').textContent = nokey
     ? '状态: 等待配置 DEEPSEEK_API_KEY'
-    : `状态: ${s.status} · 点击 ${s.clicks.length} 次 · 黑白平衡度 ${last.toFixed(3)}` +
+    : `状态: ${s.status} · 点击 ${s.clicks.length} 次` +
       (s.final_reason ? ` · 结束原因: ${s.final_reason}` : '');
   $('canvas-img').src = s.image + '?t=' + Date.now();
   drawHeatmap(s.grid, s.seed_index);
-  drawChart(s.metric_history);
   drawTimeline(s.clicks);
 }
 function drawHeatmap(grid, seed) {
@@ -94,25 +91,6 @@ function drawHeatmap(grid, seed) {
       ctx.strokeRect((i % 8) * cell + 1, Math.floor(i / 8) * cell + 1, cell - 2, cell - 2);
     }
   }
-}
-function drawChart(hist) {
-  const c = $('chart'), ctx = c.getContext('2d');
-  ctx.clearRect(0, 0, c.width, c.height);
-  if (hist.length < 1) return;
-  const w = c.width, h = c.height, pad = 6;
-  ctx.strokeStyle = '#333'; ctx.beginPath();
-  for (let y = 0; y <= 4; y++) {
-    const yy = pad + ((h - 2 * pad) * y) / 4;
-    ctx.moveTo(pad, yy); ctx.lineTo(w - pad, yy);
-  }
-  ctx.stroke();
-  ctx.strokeStyle = '#4f4'; ctx.beginPath();
-  hist.forEach((v, i) => {
-    const x = pad + (i * (w - 2 * pad)) / Math.max(hist.length - 1, 1);
-    const y = h - pad - v * (h - 2 * pad);
-    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-  });
-  ctx.stroke();
 }
 function drawTimeline(clicks) {
   // 按 round 分组：同一轮（一次 API 请求）的多次点击共享一次思考，合并显示。

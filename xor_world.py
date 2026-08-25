@@ -31,7 +31,6 @@ state = {
     "seed_index": 0,
     "seed_value": 0,
     "clicks": [],          # [{index, value, prev, reasoning}]：点击轨迹（决策可视化用）
-    "metric_history": [],  # 每次快照的黑白平衡度
     "status": "running",
     "final_reason": "",
     "image": "",
@@ -46,7 +45,6 @@ def init(seed_value=0, seed_index=0):
     state["seed_index"] = seed_index
     state["seed_value"] = seed_value
     state["clicks"] = []
-    state["metric_history"] = []
     state["status"] = "running"
     state["final_reason"] = ""
     state["image"] = ""
@@ -72,11 +70,6 @@ def black_ratio(canvas=None):
     if canvas is None:
         canvas = render()
     return float((canvas == 0).mean())
-
-
-def metric(canvas=None):
-    """黑白平衡度 = 1 - |黑占比 - 0.5| × 2，范围 0..1，越接近 1 越好"""
-    return 1.0 - abs(black_ratio(canvas) - 0.5) * 2
 
 
 def save_png(canvas, path):
@@ -148,6 +141,5 @@ def snapshot(step, out_dir="output"):
     img_name = f"step_{step:03d}.png"
     save_png(canvas, os.path.join(out_dir, img_name))
     state["image"] = f"/output/{img_name}"
-    state["metric_history"].append(round(metric(canvas), 4))
     with open(os.path.join(out_dir, "state.json"), "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
