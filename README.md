@@ -39,6 +39,7 @@ xor-agent/
 ├── tools.py                # set_region / view_region / evaluate 工具
 ├── logger.py               # 日志（复用 test-agent，MIT）
 ├── selftest.py             # 离线自测（不依赖 API）
+├── tests/                  # 测试工具：sim_agent.py（真实日志回放，模拟 Agent 决策全过程）+ example_data.txt（样例数据）
 ├── web/index.html          # 实时决策可视化页（原生 JS，SSE 订阅 /events 实时渲染）
 ├── context-log/            # 排查/实测记录（一个主题一个文件）
 ├── Interactive Drawing XOR.html  # 原始画布作品
