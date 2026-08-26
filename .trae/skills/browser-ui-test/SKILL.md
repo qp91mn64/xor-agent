@@ -15,7 +15,7 @@ description: "用模拟数据流探针驱动浏览器实测前端交互（滚动
 **必备条件**
 - 项目有本地可启动的 HTTP 服务：本项目 `agent.start_server(root, port)`（stdlib http.server）。
 - 有可注入模拟数据的入口：本项目 `agent.write_reasoning_live / xor_world.set_region / agent.snap`（→ SSE 广播 + state.json）。
-- 探针脚本导入项目模块即可，**不需要 API key**（参考 `selftest.py` / 已删的 probe_sse.py 模式）。
+- 探针脚本导入项目模块即可，**不需要 API key**（参考 `tests/selftest.py` / 已删的 probe_sse.py 模式）。
 
 ## 操作步骤
 

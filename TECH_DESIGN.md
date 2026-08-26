@@ -60,7 +60,7 @@ web/index.html（画布 / 热力图 / 决策过程：思考+点击）
 | `pattern_desc.py` | 图案语义单一来源：读 pattern_description.md + 单值程序化描述 |
 | `logger.py` | 时间戳日志（复用 test-agent，MIT） |
 | `web/index.html` | EventSource 订阅 /events 实时渲染（原生 JS，无框架；3s 轮询兜底） |
-| `selftest.py` | 离线自测（不依赖 API，交付前必跑） |
+| `tests/selftest.py` | 离线自测（不依赖 API，交付前必跑） |
 
 ## 三、关键机制
 

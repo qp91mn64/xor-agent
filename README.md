@@ -38,8 +38,10 @@ xor-agent/
 ├── pattern_description.md  # 图案语义参考文档（手写，AI 的设计依据）
 ├── tools.py                # set_region / view_region / evaluate 工具
 ├── logger.py               # 日志（复用 test-agent，MIT）
-├── selftest.py             # 离线自测（不依赖 API）
-├── tests/                  # 测试工具：sim_agent.py（真实日志回放，模拟 Agent 决策全过程）+ example_data.txt（样例数据）
+├── tests/                  # 自测与测试工具
+│   ├── selftest.py         # 离线自测（不依赖 API，交付前必跑）
+│   ├── sim_agent.py        # 模拟 Agent 回放器
+│   └── example_data.txt    # 模拟 Agent 样例数据（真实日志回放）
 ├── web/index.html          # 实时决策可视化页（原生 JS，SSE 订阅 /events 实时渲染）
 ├── context-log/            # 排查/实测记录（一个主题一个文件）
 ├── Interactive Drawing XOR.html  # 原始画布作品

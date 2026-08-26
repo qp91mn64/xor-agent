@@ -1,9 +1,13 @@
 """离线自测（不依赖 API）：渲染、指标、工具、种子锁定、快照。
 
-运行: python selftest.py
+运行: python tests/selftest.py
 """
 
 import os
+import sys
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)  # 脚本位于 tests/ 子目录：先让项目根可导入，再 import agent 等
 
 import xor_world
 import tools
@@ -69,7 +73,7 @@ def test_server():
 
     import agent
 
-    httpd, port = agent.start_server(os.path.abspath("."), 0)
+    httpd, port = agent.start_server(agent.BASE, 0)
     time.sleep(0.2)
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/") as r:
@@ -176,9 +180,10 @@ def main():
     assert tools.execute_tool("nope", {}).startswith("Unknown")
 
     # 8. 快照
-    xor_world.snapshot(0)
-    assert os.path.exists("output/state.json")
-    assert os.path.exists("output/step_000.png")
+    out_dir = os.path.join(BASE_DIR, "output")
+    xor_world.snapshot(0, out_dir)
+    assert os.path.exists(os.path.join(out_dir, "state.json"))
+    assert os.path.exists(os.path.join(out_dir, "step_000.png"))
     print("快照 OK: output/state.json + output/step_000.png")
 
     # 9. coverage
