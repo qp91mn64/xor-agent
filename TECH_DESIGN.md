@@ -44,7 +44,7 @@ agent.py 主循环 ──执行──▶ tools.py 分派 ──▶ xor_world.py�
    │                        │
    │ ② 每步 snapshot()       └── 返回结果文本 ──▶ 回填 messages，进入下一轮
    ▼
-output/state.json + step_NNN.png
+output/state.json
    │ ③ SSE 推送（/events：思考 delta 与快照到达即推；web 3s 低频轮询兜底）
    ▼
 web/index.html（画布 / 热力图 / 决策过程：思考+点击）
@@ -74,7 +74,7 @@ web/index.html（画布 / 热力图 / 决策过程：思考+点击）
 | `view_region` | index | 查看区域当前值和图案描述 | view(局部) |
 | `evaluate` | 无 | 返回整幅画布进度（已设定/未设定区域数） | view(整体) |
 
-主循环（流式）：AI 调用工具 → 执行 → 结果文本回填 messages → 循环，直到 AI 不再调用工具或触达终止条件。每次工具调用后写一份 state.json + PNG 快照。模型可能一次请求返回多个工具调用（批量并行，实测一轮 16~31 个，或者一轮填满 63 格），点击按轮次（round）记录，供可视化按轮分组。
+主循环（流式）：AI 调用工具 → 执行 → 结果文本回填 messages → 循环，直到 AI 不再调用工具或触达终止条件。每次工具调用后写一份 state.json 快照。模型可能一次请求返回多个工具调用（批量并行，实测一轮 16~31 个，或者一轮填满 63 格），点击按轮次（round）记录，供可视化按轮分组。
 
 终止条件（仅前两条可调：`--rounds` / `--clicks`，其余为代码常量）：
 - 最多 N 次循环（一次循环 = 一次 API 请求，默认 30，`--rounds`）
@@ -101,14 +101,14 @@ v1 曾以黑白平衡度 `1 - |黑像素占比 - 0.5| × 2`（渲染后数像素
 
 ### 实时可视化
 
-**架构一句话**：agent 每走一步把状态落盘到 `output/`（JSON+PNG）并广播 SSE 事件（`/events` 长连接），`web/index.html` 用 EventSource 订阅实时渲染；中间只有一个标准库 HTTP 服务，无框架、无 CDN、无 WebSocket。
+**架构一句话**：agent 每走一步把状态落盘到 `output/state.json`（JSON）并广播 SSE 事件（`/events` 长连接），`web/index.html` 用 EventSource 订阅实时渲染；中间只有一个标准库 HTTP 服务，无框架、无 CDN、无 WebSocket。
 
 **服务端（agent.py，标准库实现）**
 - `start_server()`：`socketserver.ThreadingTCPServer` 子类（`allow_reuse_address=False`，Windows 端口复用坑：必须显式关闭，否则固定端口 fallback 永不触发、与占用者共存，见 context-log）+ `SimpleHTTPRequestHandler`（`directory=BASE`，BASE=脚本所在目录，不依赖 cwd，防止从系统盘启动暴露目录）。固定绑定 `127.0.0.1`，端口默认固定 8765（被占时自动 fallback 随机并打印实际端口），`--port` 可覆盖（0=随机）；后台守护线程运行。
-- 路径白名单：`/` 或 `/index.html` 改写为 `/web/index.html`；只放行 `/web/` 与 `/output/` 前缀的文件，以 `/` 结尾的目录请求一律 404（不列目录、不枚举文件），其余路径一律 404——所以 `/output/step_003.png`、`/output/state.json` 可直接 fetch，而 `.env`、`*.py` 等根目录文件不可达。
+- 路径白名单：`/` 或 `/index.html` 改写为 `/web/index.html`；只放行 `/web/` 与 `/output/` 前缀的文件，以 `/` 结尾的目录请求一律 404（不列目录、不枚举文件），其余路径一律 404——所以 `/output/state.json`、`/output/reasoning_live.json` 可直接 fetch，而 `.env`、`*.py` 等根目录文件不可达。
 - 敏感文件拒绝（白名单之外的第二道防线）：`.env` 等点文件、`*.log`、`probe_*`/`_` 前缀的探针临时脚本一律返回 404，防止密钥/日志被本机 HTTP 下载（`_is_sensitive_path`）。`do_GET` 先 `unquote` 再 `normpath` 再检查，URL 编码的路径穿越（`%2e%2e`=`.`/`..`、`%2eenv`=`.env`、嵌套 `%252e`）与含 ASCII 控制字符（`%00`/`%0a`）的路径同样 404（实测可下载 `.env`，见 context-log/2026-08-22_HTTP路径穿越密钥泄露.md）。
 - 自动打开浏览器：启动后 `webbrowser.open(url)`（`--no-open` 可关），避免思考流把网址刷出视野。
-- `xor_world.snapshot(step)`：**每次工具调用后**渲染 512×512 PNG → 写 `output/step_NNN.png`；更新 `state["image"]`（URL 路径）；写 `output/state.json`（含 grid、seed_index、seed_value、clicks（每条含 reasoning、round）、status、final_reason、image）。启动时先做一次 step 0 快照。
+- `xor_world.snapshot(out_dir)`：**每次工具调用后**写 `output/state.json`（含 grid、seed_index、seed_value、clicks（每条含 reasoning、round）、status、final_reason）。画布由前端按 grid 在 canvas 复刻 `(dx^dy)&a` 渲染（与原始作品 Interactive Drawing XOR.html 一致，不落 PNG 文件）。启动时先做一次初始快照。
 - 无密钥不退出：启动后若 `.env` 未配置 `DEEPSEEK_API_KEY`，不报错退出——`state["status"]` 置为 `no_key` 并快照，网页显示配置引导（复制 env.example 填 key）；主线程每 2 秒重读 `.env`，检测到密钥后 `status` 恢复 `running` 并自动开始运行（无需重启）。不能在这里直接 `SystemExit`：进程退出会杀死服务线程，浏览器只剩一个连不上的死页面。
 - 流式实时思考：API 调用用 `stream=True`，思考增量（reasoning_content）实时打印到控制台、原子写 `output/reasoning_live.json`（`{round, reasoning}`，web 兜底轮询用）并 SSE 广播 `reasoning` 事件（`{round, reasoning}` 全文，前端即时显示）；一轮结束后由下一轮覆盖，运行结束删除。流式仅改变传输方式，不改变 token 计费，无额外成本。
 - SSE 推送（2026-08-25 新增，见 context-log/2026-08-25_SSE实时推送.md）：`/events` 端点返回 `text/event-stream` 长连接（`_Handler.protocol_version="HTTP/1.1"`，HTTP/1.1 才有标准 keep-alive 流）。每连接一个 `queue.Queue` + 专属线程阻塞消费，空闲 15s 发注释行心跳；`_sse_broadcast` 向所有连接广播事件，广播前丢弃队列旧事件只留最新（快照语义，中间版本丢弃无妨）。推送事件两类：`reasoning`（思考全文，`write_reasoning_live`/`clear_reasoning_live` 触发，clear 为 `{round:-1}`）与 `state`（state 全量，`snap()` 快照后触发）。浏览器关闭/刷新连接时写失败即移除连接，不影响主循环；`daemon_threads=True` 保证 SSE 长连接线程不阻塞进程退出。
@@ -116,8 +116,8 @@ v1 曾以黑白平衡度 `1 - |黑像素占比 - 0.5| × 2`（渲染后数像素
 **客户端（web/index.html，原生 JS）**
 - 主通道是 `EventSource('/events')` 长连接（SSE）：`reasoning` 事件（`{round, reasoning}`）更新进行中轮思考全文，`state` 事件（state 全量）整体重渲染，两者合并为一张卡（2026-08-24 布局定稿：一张卡优于"实时思考+轨迹"两张卡，见 context-log）。渲染经 `requestAnimationFrame` 合并（delta 频率高于 60fps 时只渲染最新状态）。`setInterval(tick, 3000)` 低频兜底轮询（EventSource 断线自动重连，重连间隙靠轮询保证最终一致）；页面加载先 fetch 一次全量（SSE 无历史事件）。`fetch` 一律带 `{cache:'no-store'}`（HTML 响应头也 `Cache-Control: no-store`，浏览器缓存旧版页面会让前端修复不生效——实测多次踩坑）。
 - 实时思考显示：`reasoning` 事件**直接显示思考全文**——agent 每次收到 API 思考 delta 就广播一次，前端即时显示，显示速度与终端（控制台实时打印）一致；曾用 60 字符/秒固定节流，实测真实 delta 更快导致 UI 落后于终端，已移除（AGENTS.md：实际 API 速度 ≠ 60 字符/秒）。轮次切换（round 变化）直接替换为新轮文本；`clear_reasoning_live` 广播 `{round:-1}`，timeline 只剩已完成轮次。
-- 智能跟随滚动（2026-08-25，方向感知 + 按钮兜底，见 context-log/2026-08-25_滚动跟随修复.md）：向上滚动且距底 ≥ 40px（PAUSE_DIST）→ 暂停跟随，内容照常追加不打扰；向下滚动且距底 < 150px（RESUME_DIST）→ 自动恢复跟随（方向感知，避免"内容持续追加、底部移动"时差一点够不到底；单一阈值放大会导致翻历史时被误拉回，故暂停/恢复阈值分离）；暂停时时间线右下角浮现「↓ 回到底部」按钮，点击必回底并恢复跟随。图片按需刷新：快照名变化才重载 512×512 PNG。
-- 渲染三块：当前画布（`<img>` 指向 state.image，加 `?t=时间戳` 防缓存）；参数热力图（canvas 2D，值 -64..63 映射色相，低值红、高值蓝）；**AI 决策过程：思考 + 点击**（一张卡，按 round 分组、最新 20 组；进行中轮思考显示当前累积全文并标「思考中…」、历史轮显示完整思考，一组下面跟该批格子，reasoning 经 `esc()` 转义防 HTML 注入）。
+- 智能跟随滚动（2026-08-25，方向感知 + 按钮兜底，见 context-log/2026-08-25_滚动跟随修复.md）：向上滚动且距底 ≥ 40px（PAUSE_DIST）→ 暂停跟随，内容照常追加不打扰；向下滚动且距底 < 150px（RESUME_DIST）→ 自动恢复跟随（方向感知，避免"内容持续追加、底部移动"时差一点够不到底；单一阈值放大会导致翻历史时被误拉回，故暂停/恢复阈值分离）；暂停时时间线右下角浮现「↓ 回到底部」按钮，点击必回底并恢复跟随。
+- 渲染三块：当前画布（`<canvas id="canvas-main" width="512" height="512">`，前端按 grid 复刻 `(dx^dy)&a` 逐像素渲染——每区 64×64，负值 mask 写 `-a-1`（numpy 语义，JS 的 `~a` 是 32 位补码不能直接用）；参数热力图（canvas 2D，值 -64..63 映射色相，低值红、高值蓝）；**AI 决策过程：思考 + 点击**（一张卡，按 round 分组、最新 20 组；进行中轮思考显示当前累积全文并标「思考中…」、历史轮显示完整思考，一组下面跟该批格子，reasoning 经 `esc()` 转义防 HTML 注入）。
 
 **为什么用"SSE 推送"而不是高频轮询**（2026-08-25 决策）：1 秒轮询把思考 delta 累积成"一段段蹦"，观感远不如终端逐字实时；SSE（EventSource）是浏览器原生单向推送（服务器→浏览器，本场景浏览器不发数据，无需 WebSocket 的双向能力），stdlib `http.server` 可实现。文件轮询降为 3s 兜底：EventSource 断线自动重连，重连间隙靠轮询保证最终一致。
 

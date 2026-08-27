@@ -9,7 +9,6 @@
 | openai | 1.109.1 | Apache-2.0 | DeepSeek API 客户端（OpenAI 兼容） |
 | python-dotenv | 1.2.2 | BSD-3-Clause | 读取 .env 配置 |
 | numpy | 1.24 | BSD-3-Clause | 像素级渲染计算 |
-| pillow | 10.0 | HPND | 输出 PNG |
 
 ## 传递依赖
 
@@ -19,7 +18,7 @@ openai 会拉入传递依赖（anyio、certifi、distro、h11、httpcore、httpx
 
 - 全部依赖为宽松许可证或文件级弱 copyleft，不影响本项目选择 MIT 许可证（与上游 test-agent 一致）。
 - DeepSeek API 为服务调用，不构成代码依赖，不产生许可证义务。
-- 原始 HTML 的 p5.js 为 LGPL-2.1：本项目新实现用 numpy 复刻 `(dx^dy)&a` 渲染逻辑，不依赖 p5.js。
+- 原始 HTML 的 p5.js 为 LGPL-2.1：本项目不依赖 p5.js。渲染为本地复刻——后端 numpy（`xor_world.render()`，供自测验证）+ 前端原生 canvas JS（`web/index.html` 按 grid 绘制主画布，免 PNG）。
 
 ## 备注
 

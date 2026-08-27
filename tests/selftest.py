@@ -181,10 +181,9 @@ def main():
 
     # 8. 快照
     out_dir = os.path.join(BASE_DIR, "output")
-    xor_world.snapshot(0, out_dir)
+    xor_world.snapshot(out_dir)
     assert os.path.exists(os.path.join(out_dir, "state.json"))
-    assert os.path.exists(os.path.join(out_dir, "step_000.png"))
-    print("快照 OK: output/state.json + output/step_000.png")
+    print("快照 OK: output/state.json")
 
     # 9. coverage
     assert xor_world.coverage() >= 1  # 点击过区域 1

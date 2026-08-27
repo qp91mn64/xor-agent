@@ -335,9 +335,9 @@ def parse_args():
     return p.parse_args()
 
 
-def snap(step):
+def snap():
     """快照 + SSE 广播 state（web 实时收到更新，无需轮询等文件）"""
-    xor_world.snapshot(step, out_dir=OUT)
+    xor_world.snapshot(out_dir=OUT)
     _sse_broadcast("state", xor_world.state)
 
 
@@ -376,26 +376,22 @@ def main():
         opened = webbrowser.open(url)
         write_log(f"自动打开浏览器（--no-open 可关闭）：{'成功' if opened else '失败'}", log_file)
 
-    step = 0
-    snap(step)  # 初始快照
-    step += 1
+    snap()  # 初始快照
 
     # 无密钥不退出：服务已启动，网页显示配置引导，后台轮询 .env，检测到密钥后自动开始。
     # 不能在这里直接 SystemExit：进程退出会杀死服务线程，浏览器只剩一个连不上的死页面（原 bug 根因）。
     api_key = get_api_key_or_none()
     if api_key is None:
         xor_world.state["status"] = "no_key"
-        snap(step)
-        step += 1
-        write_log("未找到 DEEPSEEK_API_KEY：进入等待配置状态（网页显示引导，配置后自动续跑，无需重启）", log_file)
+        snap()
+        write_log("未找到 DEEPSEEK_API_KEY：进入等待配置状态（网页显示配置引导，配置后自动续跑，无需重启）", log_file)
         print("未找到 DEEPSEEK_API_KEY：网页已显示配置引导。将 env.example 复制为 .env 并填写密钥，保存后自动继续。")
         while api_key is None:
             time.sleep(2)
             api_key = get_api_key_or_none()
         write_log("检测到 DEEPSEEK_API_KEY，自动开始运行", log_file)
         xor_world.state["status"] = "running"
-        snap(step)
-        step += 1
+        snap()
 
     client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
     messages = [{"role": "system", "content": build_system_prompt(args.seed, args.seed_index)}]
@@ -444,8 +440,7 @@ def main():
             log_tool_call(name, tc.id, arguments, result, log_file)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
-            snap(step)  # 每次工具调用后刷新可视化快照（快照 + SSE 广播）
-            step += 1
+            snap()  # 每次工具调用后刷新可视化快照（快照 + SSE 广播）
 
             if name == "set_region":
                 if result.startswith("Invalid"):
@@ -472,7 +467,7 @@ def main():
     success = coverage == xor_world.ROWS * xor_world.COLS - 1  # 63 个非种子区域
     xor_world.state["status"] = "success" if success else "incomplete"
     xor_world.state["final_reason"] = reason or "达到循环上限"
-    snap(step)
+    snap()
     result_text = (
         f"{'成功' if success else '失败'}：{reason or '达到循环上限'}。"
         f"已点击 {coverage}/63 个非种子区域。"

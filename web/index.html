@@ -15,7 +15,7 @@
   #status { margin-bottom: 12px; font-size: 13px; color: #fc9; }
   .cards { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
   .card { background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 12px; }
-  img#canvas-img { image-rendering: pixelated; border: 1px solid #444; }
+  canvas#canvas-main { image-rendering: pixelated; }
   canvas { border: 1px solid #444; background: #000; }
   #timeline { max-height: 460px; overflow-y: auto; width: 480px; font-size: 12px; }
   #timeline-box { position: relative; }
@@ -41,7 +41,7 @@
   配置步骤：① 在项目目录执行 <code>copy env.example .env</code>；② 编辑 <code>.env</code> 填入 API key 并保存；③ 本页将自动检测到 API key 并开始运行，无需重启程序。
 </div>
 <div class="cards">
-  <div class="card"><h2>当前画布（512×512）</h2><img id="canvas-img" alt="" width="512" height="512"></div>
+  <div class="card"><h2>当前画布（512×512）</h2><canvas id="canvas-main" width="512" height="512"></canvas></div>
   <div class="card"><h2>参数热力图（值 -64..63：低红高蓝）</h2><canvas id="heatmap" width="256" height="256"></canvas></div>
   <div class="card"><h2>AI 决策过程：思考 + 点击</h2><div id="timeline-box"><div id="timeline"></div><button id="follow-btn" hidden>↓ 回到底部</button></div></div>
 </div>
@@ -81,7 +81,6 @@ const PAUSE_DIST = 40;    // 距底 >= 此值且向上滚 → 暂停跟随
 const RESUME_DIST = 150;  // 距底 < 此值且向下滚 → 恢复跟随
 let autoFollow = true;
 let lastScrollTop = 0;  // 记录最近一次滚动位置以判断方向；程序化滚动时同步更新，防方向误判
-let lastImage = '';     // 图片按需刷新：画布快照名变化才重载 512×512 PNG
 TIMELINE.addEventListener('scroll', () => {
   const dist = TIMELINE.scrollHeight - TIMELINE.scrollTop - TIMELINE.clientHeight;
   const dirDown = TIMELINE.scrollTop > lastScrollTop;
@@ -128,12 +127,33 @@ function render(s) {
     ? '状态: 等待配置 DEEPSEEK_API_KEY'
     : `状态: ${s.status} · 点击 ${s.clicks.length} 次` +
       (s.final_reason ? ` · 结束原因: ${s.final_reason}` : '');
-  if (s.image !== lastImage) {  // 快照名变才重载图片：轮询加速后避免每次重载 512×512 PNG
-    lastImage = s.image;
-    $('canvas-img').src = s.image + '?t=' + Date.now();
-  }
+  drawCanvas(s.grid);
   drawHeatmap(s.grid, s.seed_index);
   drawTimeline(s.clicks);
+}
+function drawCanvas(grid) {
+  // 主画布：用 grid 在 canvas 复刻后端 (dx^dy) & a 渲染（512×512，每区 64×64 像素），无需后端 PNG。
+  // 负值 mask 必须写 -a-1（numpy 语义），不能用 JS 的 ~a（32 位补码，~(-1) 是 -2 而非 0）。
+  const c = $('canvas-main'), ctx = c.getContext('2d');
+  const img = ctx.createImageData(512, 512);
+  const data = img.data;
+  const px = 64;
+  for (let i = 0; i < 64; i++) {
+    const a = grid[i];
+    const mask = a >= 0 ? a : -a - 1;
+    const invert = a < 0;
+    const x0 = (i % 8) * px, y0 = ((i / 8) | 0) * px;
+    for (let dy = 0; dy < px; dy++) {
+      for (let dx = 0; dx < px; dx++) {
+        const white = ((dx ^ dy) & mask) !== 0;
+        const v = white !== invert ? 255 : 0;  // a<0 反色
+        const p = ((y0 + dy) * 512 + (x0 + dx)) * 4;
+        data[p] = data[p + 1] = data[p + 2] = v;
+        data[p + 3] = 255;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
 }
 function drawHeatmap(grid, seed) {
   const c = $('heatmap'), ctx = c.getContext('2d');

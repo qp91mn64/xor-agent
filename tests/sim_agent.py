@@ -190,9 +190,7 @@ def replay(events, meta, speed=1.0, port=8765, no_open=False, exit_after=False):
     if not no_open:
         webbrowser.open(url)
 
-    step = 0
-    agent.snap(step)  # 初始快照
-    step += 1
+    agent.snap()  # 初始快照
     round_reasoning = {}
     tool_count = 0
     click_count = 0
@@ -229,8 +227,7 @@ def replay(events, meta, speed=1.0, port=8765, no_open=False, exit_after=False):
                 click_count += 1
             brief = result if len(result) <= 60 else result[:60] + "…"
             print(f"  [{tool_count}] {ev['name']} {ev['args']} -> {brief}", flush=True)
-            agent.snap(step)
-            step += 1
+            agent.snap()
         elif kind == "output":
             print(f"  模型输出: {ev['text']}", flush=True)
         elif kind == "finish":
@@ -243,8 +240,7 @@ def replay(events, meta, speed=1.0, port=8765, no_open=False, exit_after=False):
 
     # 结束快照 + 数据完整性校验（example_data.txt 的数据是否被完整用完）
     xor_world.state["status"] = xor_world.state.get("status", "running")
-    agent.snap(step)
-    step += 1
+    agent.snap()
     unset = xor_world.unset_regions()
     print(f"统计(实际): 工具调用 {tool_count} 次，成功点击 {click_count} 次，覆盖 {xor_world.coverage()}/63", flush=True)
     if unset:

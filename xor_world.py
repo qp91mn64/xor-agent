@@ -11,7 +11,6 @@ import json
 import os
 
 import numpy as np
-from PIL import Image
 
 from pattern_desc import pattern_description
 
@@ -33,7 +32,6 @@ state = {
     "clicks": [],          # [{index, value, prev, reasoning}]：点击轨迹（决策可视化用）
     "status": "running",
     "final_reason": "",
-    "image": "",
 }
 
 
@@ -47,7 +45,6 @@ def init(seed_value=0, seed_index=0):
     state["clicks"] = []
     state["status"] = "running"
     state["final_reason"] = ""
-    state["image"] = ""
 
 
 def render():
@@ -70,10 +67,6 @@ def black_ratio(canvas=None):
     if canvas is None:
         canvas = render()
     return float((canvas == 0).mean())
-
-
-def save_png(canvas, path):
-    Image.fromarray(canvas, mode="L").save(path)
 
 
 def set_region(index, value, reasoning=None, round_id=None):
@@ -134,12 +127,8 @@ def coverage():
     return len({c["index"] for c in state["clicks"]})
 
 
-def snapshot(step, out_dir="output"):
-    """写 output/step_NNN.png 与 output/state.json（供实时可视化轮询）"""
+def snapshot(out_dir="output"):
+    """写 output/state.json（供实时可视化 SSE 推送与轮询兜底；画布由前端按 grid 渲染，无需 PNG）"""
     os.makedirs(out_dir, exist_ok=True)
-    canvas = render()
-    img_name = f"step_{step:03d}.png"
-    save_png(canvas, os.path.join(out_dir, img_name))
-    state["image"] = f"/output/{img_name}"
     with open(os.path.join(out_dir, "state.json"), "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
