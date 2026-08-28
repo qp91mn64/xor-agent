@@ -42,7 +42,7 @@
 </div>
 <div class="cards">
   <div class="card"><h2>当前画布（512×512）</h2><canvas id="canvas-main" width="512" height="512"></canvas></div>
-  <div class="card"><h2>参数热力图（值 -64..63：低红高蓝）</h2><canvas id="heatmap" width="256" height="256"></canvas></div>
+  <div class="card"><h2>参数示意图</h2><canvas id="paramgrid" width="256" height="256"></canvas></div>
   <div class="card"><h2>AI 决策过程：思考 + 点击</h2><div id="timeline-box"><div id="timeline"></div><button id="follow-btn" hidden>↓ 回到底部</button></div></div>
 </div>
 <script>
@@ -128,7 +128,7 @@ function render(s) {
     : `状态: ${s.status} · 点击 ${s.clicks.length} 次` +
       (s.final_reason ? ` · 结束原因: ${s.final_reason}` : '');
   drawCanvas(s.grid);
-  drawHeatmap(s.grid, s.seed_index);
+  drawParamGrid(s.grid, s.seed_index);
   drawTimeline(s.clicks);
 }
 function drawCanvas(grid) {
@@ -155,22 +155,35 @@ function drawCanvas(grid) {
   }
   ctx.putImageData(img, 0, 0);
 }
-function drawHeatmap(grid, seed) {
-  const c = $('heatmap'), ctx = c.getContext('2d');
+// 白像素占比：只取决于 mask 的二进制 1 个数（128 个值暴力遍历校验一致）。原理：每个 dy 行
+// dx^dy 是 0..63 的一个置换，mask 置位的 k 个二进制位约束了 (dx^dy)&mask==0 的数量 = 2^(6-k)；a<0 反色取补。
+function whiteRatio(a) {
+  const m = a >= 0 ? a : -a - 1;
+  let k = 0;
+  for (let t = m; t > 0; t >>= 1) k += t & 1;
+  const base = (64 - (1 << (6 - k))) / 64;
+  return a >= 0 ? base : 1 - base;
+}
+function drawParamGrid(grid, seed) {
+  const c = $('paramgrid'), ctx = c.getContext('2d');
   ctx.clearRect(0, 0, c.width, c.height);
   const cell = 32;
   for (let i = 0; i < 64; i++) {
-    const t = (grid[i] + 64) / 128;  // 0..1
-    ctx.fillStyle = `hsl(${Math.round(t * 240)}, 75%, 45%)`;
-    ctx.fillRect((i % 8) * cell, Math.floor(i / 8) * cell, cell, cell);
-    ctx.fillStyle = '#000';
+    const a = grid[i];
+    const x = (i % 8) * cell, y = Math.floor(i / 8) * cell;
+    // 灰度 = 白像素占比，语义自明（亮格=亮图案）；文字黑/白随底明暗，种子边框同理
+    const g = Math.round(whiteRatio(a) * 255);
+    const bright = g > 127;
+    ctx.fillStyle = `rgb(${g},${g},${g})`;
+    ctx.fillRect(x, y, cell, cell);
+    ctx.fillStyle = bright ? '#000' : '#fff';
     ctx.font = '11px monospace';
-    ctx.fillText(i, (i % 8) * cell + 3, Math.floor(i / 8) * cell + 12);
-    ctx.fillText(grid[i], (i % 8) * cell + 3, Math.floor(i / 8) * cell + 26);
+    ctx.fillText(i, x + 3, y + 12);
+    ctx.fillText(a, x + 3, y + 26);
     if (i === seed) {
-      ctx.strokeStyle = '#fff';
+      ctx.strokeStyle = bright ? '#000' : '#fff';
       ctx.lineWidth = 2;
-      ctx.strokeRect((i % 8) * cell + 1, Math.floor(i / 8) * cell + 1, cell - 2, cell - 2);
+      ctx.strokeRect(x + 1, y + 1, cell - 2, cell - 2);
     }
   }
 }
