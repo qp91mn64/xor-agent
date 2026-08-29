@@ -1,13 +1,12 @@
 """Agent 主循环：DeepSeek function calling，驱动 AI 为 XOR 画布逐格选择图案参数。
 
 用法：
-    python agent.py               默认参数（概要日志）
+    python agent.py               默认参数（日志始终记录模型思考/工具调用/输出）
     python agent.py --seed 5      种子区域值（默认 0）
     python agent.py --rounds 30   最多循环次数（默认 30）
     python agent.py --clicks 64   最多点击次数（默认 64）
     python agent.py --port 8765   可视化端口（默认固定 8765，被占时自动 fallback 随机）
     python agent.py --no-open     不自动打开浏览器
-    python agent.py --detailed    详细日志：记录模型思考与工具调用原文（或环境变量 DETAILED_LOG=1）
     python agent.py --help        查看帮助
 
 设计见 TECH_DESIGN.md。主循环骨架复用 test-agent 的 minimal-agent（MIT）。
@@ -28,7 +27,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler
 from types import SimpleNamespace
 
-from dotenv import load_dotenv, dotenv_values
+from dotenv import load_dotenv
 from openai import OpenAI
 
 import pattern_desc
@@ -330,8 +329,6 @@ def parse_args():
     p.add_argument("--port", type=int, default=DEFAULT_PORT,
                    help=f"可视化端口，0=随机（默认固定 {DEFAULT_PORT}，被占时自动 fallback 随机）")
     p.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
-    p.add_argument("--detailed", action="store_true",
-                   help="详细日志（模型思考+工具调用原文）；也可用环境变量 DETAILED_LOG=1/true/yes 开启")
     return p.parse_args()
 
 
@@ -343,21 +340,10 @@ def snap():
 
 def main():
     args = parse_args()
-    # 必须先加载 .env 再读环境变量：DETAILED_LOG 可能写在 .env 里。
-    # 原来 load_dotenv 只在 get_api_key() 里调用，晚于下面的 detailed 判断，导致 .env 里的 DETAILED_LOG 永远读不到
+    # .env 需在 get_api_key() 前加载（原 load_dotenv 在 get_api_key 内调用，晚于此处导致 .env 里的密钥读不到）
     load_dotenv(os.path.join(BASE, ".env"))  # 密钥等仍走 .env→os.environ（默认不覆盖已有环境变量）
-    # 详细日志开关：--detailed，或 DETAILED_LOG 为 1/true/yes（进程环境或 .env 任一命中即开启）。
-    # 必须再用 dotenv_values 直读 .env：若进程环境残留 DETAILED_LOG=0（setx/profile 遗留），
-    # load_dotenv 默认 override=False 不会用 .env 的 1 覆盖它，会静默压掉开关（实测根因，见 context-log）。
-    env_val = os.getenv("DETAILED_LOG", "")
-    env_file_val = (dotenv_values(os.path.join(BASE, ".env")).get("DETAILED_LOG") or "")
-    on_list = ("1", "true", "yes")
-    detailed = args.detailed or env_val.strip().lower() in on_list or env_file_val.strip().lower() in on_list
     log_file = os.path.join(BASE, get_log_filename("xor_agent"))  # 日志固定写到 BASE（不依赖 cwd）
-    # 启动诊断（保留）：同时显示进程环境与 .env 两个来源，排查"设了但没生效"直接看日志即可定位
-    write_log(f"DETAILED_LOG 进程环境={env_val!r} .env={env_file_val!r} → detailed={detailed}", log_file)
-    if detailed:
-        write_log("详细日志已开启（--detailed / DETAILED_LOG）", log_file)
+    # 日志始终记录模型思考/工具调用/输出（详细日志为默认，见 logger.log_model_response）
 
     xor_world.init(seed_value=args.seed, seed_index=args.seed_index)
     write_log(f"种子: 区域 {args.seed_index} = {args.seed}", log_file)
@@ -421,7 +407,7 @@ def main():
             raise
         write_log(f"本轮请求耗时 {time.monotonic() - t0:.1f}s", log_file)
         messages.append(assistant_message(msg))
-        log_model_response(msg, log_file, detailed)
+        log_model_response(msg, log_file)
 
         # 模型直接输出文字、不再调用工具
         if not msg.tool_calls:

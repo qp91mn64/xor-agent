@@ -9,11 +9,12 @@ def get_log_filename(prefix="agent"):
     return f"{prefix}_{timestamp}.log"
 
 
-def write_log(message, log_file=None):
-    """写一行日志，同时打印到控制台"""
+def write_log(message, log_file=None, echo=True):
+    """写一行日志，带时间戳；echo=True 时同时打印到控制台"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"[{timestamp}] {message}"
-    print(log_entry)
+    if echo:
+        print(log_entry)
     if log_file:
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(log_entry + "\n")
@@ -28,19 +29,18 @@ def get_reasoning_content(msg):
     return reasoning
 
 
-def log_model_response(msg, log_file=None, detailed=False):
+def log_model_response(msg, log_file=None):
     """记录模型一次返回。
 
-    - detailed=False：只记最终输出（content），与旧行为一致；
-    - detailed=True：额外记思考过程（reasoning_content）和工具调用原文（请求侧）。
+    - 思考与工具调用原文：只写日志文件（思考已在流式时实时打印控制台，见 agent.chat_stream）；
+    - 最终输出：同时打印控制台。
     """
-    if detailed:
-        reasoning = get_reasoning_content(msg)
-        if reasoning:
-            write_log(f"模型思考: {reasoning}", log_file)
-        if msg.tool_calls:
-            for tc in msg.tool_calls:
-                write_log(f"模型调用工具: {tc.function.name} args={tc.function.arguments}", log_file)
+    reasoning = get_reasoning_content(msg)
+    if reasoning:
+        write_log(f"模型思考: {reasoning}", log_file, echo=False)
+    if msg.tool_calls:
+        for tc in msg.tool_calls:
+            write_log(f"模型调用工具: {tc.function.name} args={tc.function.arguments}", log_file, echo=False)
     if msg.content:
         write_log(f"模型输出: {msg.content}", log_file)
 

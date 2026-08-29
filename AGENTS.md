@@ -43,5 +43,5 @@
 ## 其他
 
 - 工具调用轮次回传 reasoning_content：按 DeepSeek 官方文档，思考模式+工具调用，后续请求必须完整回传 `reasoning_content`，否则 API 返回 400（详见 https://api-docs.deepseek.com/zh-cn/guides/thinking_mode）。尽管曾测过 deepseek-v4-flash 0731 没触发 400，保留回传以防万一。
-- 排查 agent 行为：用 `python agent.py --detailed` 详细日志，记录模型思考与输出。
+- 排查 agent 行为：运行日志（`xor_agent_*.log`）默认记录模型思考、工具调用与输出。
 - 依赖管理：升级依赖后，检查 `DEPENDENCIES.md` ，重新核对许可证；新增依赖先加进 `requirements.txt` 再使用。
