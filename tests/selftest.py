@@ -179,11 +179,13 @@ def main():
     print(tools.execute_tool("evaluate", {}))
     assert tools.execute_tool("nope", {}).startswith("Unknown")
 
-    # 8. 快照
-    out_dir = os.path.join(BASE_DIR, "output")
-    xor_world.snapshot(out_dir)
-    assert os.path.exists(os.path.join(out_dir, "state.json"))
-    print("快照 OK: output/state.json")
+    # 8. 快照（每次运行独立文件夹 output/<时间戳>/state.json，见 agent.init_run_dir）
+    import agent
+    run_dir = agent.init_run_dir()
+    xor_world.snapshot(run_dir)
+    assert os.path.exists(os.path.join(run_dir, "state.json"))
+    assert agent.RUN_ID and os.path.isdir(os.path.join(BASE_DIR, "output", agent.RUN_ID))
+    print(f"快照 OK: output/{agent.RUN_ID}/state.json")
 
     # 9. coverage
     assert xor_world.coverage() >= 1  # 点击过区域 1
@@ -194,6 +196,11 @@ def main():
 
     # 11. HTTP 可视化服务冒烟测试（需先有快照）
     test_server()
+
+    # 12. 清理：删除本测试创建的运行文件夹（output/ 只应保留真实运行的存档）
+    import shutil
+    shutil.rmtree(agent.RUN_DIR, ignore_errors=True)
+    print(f"已清理测试运行文件夹 output/{agent.RUN_ID}/")
 
     print("\n全部自测通过 OK")
 

@@ -128,7 +128,7 @@ def coverage():
 
 
 def snapshot(out_dir="output"):
-    """写 output/state.json（供实时可视化 SSE 推送与轮询兜底；画布由前端按 grid 渲染，无需 PNG）"""
+    """写 <out_dir>/state.json（agent 传入每次运行的独立文件夹 output/<时间戳>/，供实时可视化 SSE 推送与轮询兜底；画布由前端按 grid 渲染，无需 PNG）"""
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "state.json"), "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)

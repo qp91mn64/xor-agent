@@ -23,6 +23,7 @@ import threading
 import time
 import urllib.parse
 import webbrowser
+from datetime import datetime
 from functools import partial
 from http.server import SimpleHTTPRequestHandler
 from types import SimpleNamespace
@@ -57,10 +58,53 @@ DEFAULT_PORT = 8765
 # 服务根目录固定为脚本所在目录（不依赖 cwd），防止从系统盘启动时暴露目录内容；
 # 运行产物（快照/实时思考/日志）也一律相对 BASE，否则从别处启动时 .env 找不到、web 轮询 /output/ 404
 BASE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(BASE, "output")
+OUT_ROOT = os.path.join(BASE, "output")
 
-# 实时思考中间文件：流式等待期间 web 轮询显示，本轮结束删除
-REASONING_LIVE = os.path.join(OUT, "reasoning_live.json")
+# 每次运行一个独立文件夹 output/<时间戳>/（秒精度 %Y%m%d_%H%M%S，与日志命名同款；
+# 同秒冲突自动加字母 a/b/…）：历史运行不被覆盖。web 仍轮询固定 URL（/output/state.json、
+# /output/reasoning_live.json），由 HTTP 层映射到当前运行文件夹（见 _Handler.do_GET）。
+RUN_ID = None          # 当前运行文件夹名，如 20260901_072315
+RUN_DIR = None         # 当前运行文件夹完整路径
+REASONING_LIVE = None  # 当前运行文件夹内的实时思考中间文件（流式等待期间 web 轮询显示，本轮结束删除）
+
+
+def _next_letter(letters):
+    """字母后缀递增："" → a → … → z → aa → ab…（双射 base-26；z 之后接 aa，实际达不到）"""
+    if not letters:
+        return "a"
+    s = list(letters)
+    i = len(s) - 1
+    while i >= 0:
+        if s[i] < "z":
+            s[i] = chr(ord(s[i]) + 1)
+            return "".join(s)
+        s[i] = "a"
+        i -= 1
+    return "a" + "".join(s)
+
+
+def init_run_dir():
+    """创建本次运行的 output/<时间戳>/ 文件夹并返回路径（进程内幂等，重复调用返回同一路径）。
+
+    秒精度时间戳 + os.mkdir 原子创建：两个进程同秒启动（如 agent.py 与 sim_agent.py 同开）时，
+    后到者收到 FileExistsError 后加字母重试，保证每个进程拿到唯一文件夹。
+    """
+    global RUN_ID, RUN_DIR, REASONING_LIVE
+    if RUN_DIR is not None:
+        return RUN_DIR
+    base = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix = ""
+    while True:
+        run_id = base + suffix
+        path = os.path.join(OUT_ROOT, run_id)
+        try:
+            os.mkdir(path)
+        except FileExistsError:
+            suffix = _next_letter(suffix)
+            continue
+        RUN_ID, RUN_DIR = run_id, path
+        REASONING_LIVE = os.path.join(path, "reasoning_live.json")
+        return RUN_DIR
 
 # --- SSE 长连接推送（实时可视化主通道） ---
 # EventSource 单向推送：思考 delta / 快照更新到达即推给浏览器，前端无需高频轮询。
@@ -128,9 +172,9 @@ def assistant_message(msg):
 
 
 def write_reasoning_live(round_id, reasoning):
-    """原子写 output/reasoning_live.json（web 兜底轮询显示实时思考）并 SSE 推送；文件不存在时 web 隐藏该面板"""
+    """原子写运行文件夹内 reasoning_live.json（web 兜底轮询显示实时思考）并 SSE 推送；文件不存在时 web 隐藏该面板"""
     try:
-        os.makedirs(OUT, exist_ok=True)
+        init_run_dir()
         payload = json.dumps({"round": round_id, "reasoning": reasoning}, ensure_ascii=False)
         tmp = REASONING_LIVE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -142,10 +186,11 @@ def write_reasoning_live(round_id, reasoning):
 
 
 def clear_reasoning_live():
-    try:
-        os.remove(REASONING_LIVE)
-    except OSError:
-        pass
+    if REASONING_LIVE is not None:  # 运行文件夹尚未建立（从未快照/写思考）时无需清理
+        try:
+            os.remove(REASONING_LIVE)
+        except OSError:
+            pass
     _sse_broadcast("reasoning", {"round": -1, "reasoning": ""})
 
 
@@ -246,6 +291,12 @@ class _Handler(SimpleHTTPRequestHandler):
         if path in ("/", "/index.html"):
             path = "/web/index.html"
             self.path = path
+        # 固定 URL → 当前运行文件夹：web 只轮询 /output/state.json 与 /output/reasoning_live.json，
+        # 实际文件落在 output/<运行ID>/ 下（每次运行独立文件夹，历史不覆盖）；RUN_ID 未建立时
+        # 原样走白名单（output/ 根下无该文件 → 404，等价于"运行尚未开始"）
+        if path in ("/output/state.json", "/output/reasoning_live.json") and RUN_ID:
+            self.path = f"/output/{RUN_ID}/{path.rsplit('/', 1)[-1]}"
+            path = self.path
         # 白名单：只有 /web/ 与 /output/ 前缀可达（规范化后，../ 已消解）
         if not (path.startswith("/web/") or path.startswith("/output/")):
             self.send_error(404)
@@ -333,8 +384,8 @@ def parse_args():
 
 
 def snap():
-    """快照 + SSE 广播 state（web 实时收到更新，无需轮询等文件）"""
-    xor_world.snapshot(out_dir=OUT)
+    """快照到当前运行文件夹（output/<时间戳>/state.json）+ SSE 广播 state（web 实时收到更新，无需轮询等文件）"""
+    xor_world.snapshot(out_dir=init_run_dir())
     _sse_broadcast("state", xor_world.state)
 
 
@@ -348,6 +399,10 @@ def main():
     xor_world.init(seed_value=args.seed, seed_index=args.seed_index)
     write_log(f"种子: 区域 {args.seed_index} = {args.seed}", log_file)
     write_log("画布: 8×8 区域，每区参数 -64..63；种子区域锁定不可修改", log_file)
+
+    # 建立本次运行文件夹（output/<时间戳>/，见 init_run_dir）：HTTP 固定 URL 映射依赖 RUN_ID，
+    # 且文件夹一旦建立即不随运行状态变化，无密钥等待期也算一次运行
+    init_run_dir()
 
     # 实时可视化 HTTP 服务（stdlib，无框架）：固定端口，被占时 fallback 随机；自动打开浏览器
     httpd, port = start_server(BASE, args.port)
