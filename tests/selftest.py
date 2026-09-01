@@ -179,13 +179,14 @@ def main():
     print(tools.execute_tool("evaluate", {}))
     assert tools.execute_tool("nope", {}).startswith("Unknown")
 
-    # 8. 快照（每次运行独立文件夹 output/<时间戳>/state.json，见 agent.init_run_dir）
+    # 8. 快照（每次运行独立文件夹 output/<时间戳>/state.json + state.png，见 agent.init_run_dir）
     import agent
     run_dir = agent.init_run_dir()
     xor_world.snapshot(run_dir)
     assert os.path.exists(os.path.join(run_dir, "state.json"))
+    assert os.path.exists(os.path.join(run_dir, "state.png"))  # 渲染图存档随快照写
     assert agent.RUN_ID and os.path.isdir(os.path.join(BASE_DIR, "output", agent.RUN_ID))
-    print(f"快照 OK: output/{agent.RUN_ID}/state.json")
+    print(f"快照 OK: output/{agent.RUN_ID}/state.json + state.png")
 
     # 9. coverage
     assert xor_world.coverage() >= 1  # 点击过区域 1

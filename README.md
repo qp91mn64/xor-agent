@@ -48,5 +48,5 @@ xor-agent/
 ├── context-log/            # 排查/实测记录（一个主题一个文件）
 ├── Interactive Drawing XOR.html  # 原始画布作品
 ├── requirements.txt / env.example / .gitignore
-└── output/                 # 运行产物：每次运行独立文件夹 <时间戳>/state.json（已 gitignore）
+└── output/                 # 运行产物：每次运行独立文件夹 <时间戳>/state.json + state.png（已 gitignore）
 ```

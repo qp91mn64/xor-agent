@@ -5,3 +5,5 @@ openai>=1.109.1
 python-dotenv>=1.2.2
 # numpy: 像素级渲染计算（BSD-3-Clause）
 numpy>=1.24
+# pillow: 画布渲染图存档（state.png，HPND 许可证）
+pillow>=10.0

@@ -11,6 +11,7 @@ import json
 import os
 
 import numpy as np
+from PIL import Image
 
 from pattern_desc import pattern_description
 
@@ -128,7 +129,13 @@ def coverage():
 
 
 def snapshot(out_dir="output"):
-    """写 <out_dir>/state.json（agent 传入每次运行的独立文件夹 output/<时间戳>/，供实时可视化 SSE 推送与轮询兜底；画布由前端按 grid 渲染，无需 PNG）"""
+    """写 <out_dir>/state.json 与 <out_dir>/state.png（画布当前状态的渲染图）。
+
+    state.json 供实时可视化（SSE 推送 + web 轮询兜底）；state.png 是同一画布状态的
+    512×512 灰度渲染图（numpy render + PIL 存盘），随快照覆盖写、运行结束即最终画布，
+    供后台存档/离线查看——web 前端不读此图，按 grid 用 canvas 复刻渲染。
+    """
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "state.json"), "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
+    Image.fromarray(render()).save(os.path.join(out_dir, "state.png"))
