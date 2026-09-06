@@ -1,19 +1,23 @@
 """模拟 Agent 回放器（可复用测试工具，常驻 tests/，与 selftest.py 同类）。
 
-解析 tests/example_data.txt（真实详细日志）并按真实时间线回放：按事件顺序驱动
+解析 tests/example_data*.txt（真实详细日志）并按真实时间线回放：按事件顺序驱动
 write_reasoning_live（思考流式）+ set_region/view_region/evaluate（工具）+ snap（快照），
 浏览器可实测完整决策过程 UI（思考流式 / 点击轨迹 / 画布填充 / 热力图 / 结束状态），
 不消耗 API token。
 
+样例文件可有多份（tests/example_data*.txt，如 example_data.txt、example_data_2.txt），
+启动时列出可选清单；不带 --data 默认回放 example_data.txt（向后兼容旧用法）。
+
 回放速度 = 日志时间戳倒推的真实速度：事件间隔按日志 [时间戳] 差值推进；每轮思考
 在「本轮请求耗时 Ns」内均匀流式流出（模型思考发生在 API 请求期间）。speed=1 即
-原始运行的真实节奏（example_data.txt 首尾约 3 分 21 秒），speed=N 为 N 倍速。
+原始运行的真实节奏，speed=N 为 N 倍速。
 
 与一次性探针（probe_*.py，用完即删）不同：本脚本常驻版本控制，数据全部来自
-example_data.txt（8 轮循环 / 72 次工具调用 / 63 次成功点击），可反复用于回归实测。
+真实运行日志，可反复用于回归实测。
 
 用法：
-    python tests/sim_agent.py                   # 默认端口 8765（被占自动 fallback 随机），自动打开浏览器
+    python tests/sim_agent.py                   # 默认回放 example_data.txt；端口 8765（被占自动 fallback 随机）
+    python tests/sim_agent.py --data 2          # 回放第 2 份样例（编号以启动时清单为准）
     python tests/sim_agent.py --speed 5         # 5 倍速（speed=1 为日志时间戳倒推的真实速度）
     python tests/sim_agent.py --no-open --exit  # 不开浏览器、回放完自动退出（CI/无人值守）
     python tests/sim_agent.py --dry-run         # 只解析日志打印事件统计，不启动服务/不回放
@@ -47,7 +51,47 @@ import agent
 import tools
 import xor_world
 
-EXAMPLE_DATA = os.path.join(BASE_DIR, "tests", "example_data.txt")
+# 样例数据发现：tests/ 下 example_data*.txt 全部视为可选样例（可多份），
+# --data N 按编号选（1 起）；默认 example_data.txt（向后兼容单样例时代）。
+SAMPLE_DIR = os.path.join(BASE_DIR, "tests")
+SAMPLE_PREFIX = "example_data"
+
+
+def list_samples():
+    """返回 tests/ 下全部样例文件的绝对路径，按文件名排序（编号即列表序）。"""
+    try:
+        names = sorted(f for f in os.listdir(SAMPLE_DIR)
+                       if f.startswith(SAMPLE_PREFIX) and f.endswith(".txt"))
+    except OSError:
+        names = []
+    if not names:
+        raise SystemExit(f"缺少样例数据: {SAMPLE_DIR}/{SAMPLE_PREFIX}*.txt")
+    return [os.path.join(SAMPLE_DIR, n) for n in names]
+
+
+def sample_brief():
+    """样例子集清单，形如 '1=example_data.txt, 2=example_data_2.txt'。"""
+    return ", ".join(f"{i}={os.path.basename(p)}" for i, p in enumerate(list_samples(), 1))
+
+
+def resolve_sample(data_arg):
+    """按 --data 值选出样例文件绝对路径。
+
+    data_arg 为 None → 默认 example_data.txt（该文件必须在场，见选择逻辑兜底）；
+    为整数 N → 第 N 份样例（1 起）。越界/缺文件时报错并列出可选份数。
+    """
+    samples = list_samples()
+    default = next((p for p in samples if os.path.basename(p) == "example_data.txt"), None)
+    if data_arg is None:
+        chosen = default if default is not None else samples[0]
+    else:
+        idx = int(data_arg)
+        if not 1 <= idx <= len(samples):
+            raise SystemExit(f"--data {idx} 超出范围：可选样例共 {len(samples)} 份（{sample_brief()}）")
+        chosen = samples[idx - 1]
+    print(f"可选样例（共 {len(samples)} 份）: {sample_brief()}", flush=True)
+    print(f"本次回放: {os.path.basename(chosen)}", flush=True)
+    return chosen
 
 # --- 日志行格式（SSE 化后的详细日志，见 context-log/2026-08-25_SSE实时推送.md） ---
 TS_FMT = "%Y-%m-%d %H:%M:%S"
@@ -177,7 +221,9 @@ def stream_reasoning(round_id, text, duration, speed):
         time.sleep(remain)
 
 
-def replay(events, meta, speed=1.0, port=8765, no_open=False, exit_after=False):
+def replay(events, meta, speed=1.0, port=8765, no_open=False, exit_after=False,
+           sample_path=None):
+    sample_name = os.path.basename(sample_path) if sample_path else "样例数据"
     xor_world.init(seed_value=meta["seed_value"], seed_index=meta["seed_index"])
     httpd, port = agent.start_server(agent.BASE, port)
     if httpd is None:
@@ -186,7 +232,7 @@ def replay(events, meta, speed=1.0, port=8765, no_open=False, exit_after=False):
     if httpd is None:
         raise SystemExit("错误：无法启动 HTTP 服务")
     url = f"http://127.0.0.1:{port}/"
-    print(f"模拟回放 {os.path.basename(EXAMPLE_DATA)} → {url}", flush=True)
+    print(f"模拟回放 {sample_name} → {url}", flush=True)
     if not no_open:
         webbrowser.open(url)
 
@@ -238,7 +284,7 @@ def replay(events, meta, speed=1.0, port=8765, no_open=False, exit_after=False):
             print(f"统计(日志): 循环 {ev['loops']} 次，工具调用 {ev['tool_calls']} 次，成功点击 {ev['clicks']} 次",
                   flush=True)
 
-    # 结束快照 + 数据完整性校验（example_data.txt 的数据是否被完整用完）
+    # 结束快照 + 数据完整性校验（样例数据是否被完整用完）
     xor_world.state["status"] = xor_world.state.get("status", "running")
     agent.snap()
     unset = xor_world.unset_regions()
@@ -246,7 +292,7 @@ def replay(events, meta, speed=1.0, port=8765, no_open=False, exit_after=False):
     if unset:
         print(f"警告: 仍有未设定区域 {unset}（数据未回放完整）", flush=True)
     else:
-        print("数据回放完整：63 个非种子区域全部设定（example_data.txt 数据用完）", flush=True)
+        print(f"数据回放完整：63 个非种子区域全部设定（{sample_name} 数据用完）", flush=True)
     agent.clear_reasoning_live()  # 运行结束，删除实时思考中间文件（web 面板随之隐藏）
 
     if exit_after:
@@ -262,7 +308,9 @@ def replay(events, meta, speed=1.0, port=8765, no_open=False, exit_after=False):
 
 
 def main():
-    p = argparse.ArgumentParser(description="用 example_data.txt 真实日志回放模拟 Agent 完整决策过程")
+    p = argparse.ArgumentParser(description="用 tests/example_data*.txt 真实日志回放模拟 Agent 完整决策过程")
+    p.add_argument("--data", default=None,
+                   help="样例编号（1 起，默认 1=example_data.txt；可选清单启动时打印）")
     p.add_argument("--port", type=int, default=8765, help="可视化端口（默认 8765，被占自动 fallback 随机）")
     p.add_argument("--speed", type=float, default=1.0,
                    help="回放速度倍率（默认 1.0 = 日志时间戳/请求耗时倒推的真实速度；越大越快）")
@@ -271,15 +319,14 @@ def main():
     p.add_argument("--dry-run", action="store_true", help="只解析日志打印事件统计，不启动服务不回放")
     args = p.parse_args()
 
-    if not os.path.exists(EXAMPLE_DATA):
-        raise SystemExit(f"缺少样例数据: {EXAMPLE_DATA}（应为 tests/example_data.txt）")
-    events, meta = parse_log(EXAMPLE_DATA)
+    data_path = resolve_sample(args.data)
+    events, meta = parse_log(data_path)
 
     loops = sum(1 for e in events if e["kind"] == "round")
     tools_ = sum(1 for e in events if e["kind"] == "tool")
     set_region_calls = sum(1 for e in events if e["kind"] == "tool" and e["name"] == "set_region")
     real_sec = events[-1]["ts"] - meta["first_ts"]
-    print(f"解析 {os.path.basename(EXAMPLE_DATA)}: 种子 区域{meta['seed_index']}={meta['seed_value']}，"
+    print(f"解析 {os.path.basename(data_path)}: 种子 区域{meta['seed_index']}={meta['seed_value']}，"
           f"{loops} 轮，工具调用 {tools_} 次（set_region {set_region_calls} 次），"
           f"真实时长 {real_sec:.0f}s", flush=True)
     if args.dry_run:
@@ -290,7 +337,7 @@ def main():
         return
 
     replay(events, meta, speed=args.speed, port=args.port,
-           no_open=args.no_open, exit_after=args.exit)
+           no_open=args.no_open, exit_after=args.exit, sample_path=data_path)
 
 
 if __name__ == "__main__":

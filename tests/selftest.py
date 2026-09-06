@@ -123,6 +123,31 @@ def test_pattern_desc():
     print("图案描述读取 OK: md 无 BOM/章节齐全；128 个值全覆盖，负值反色口径一致")
 
 
+def test_sample_data():
+    """多份样例数据可解析性（回放器 parse_log）：tests/example_data*.txt 全量遍历。
+
+    每份须为结构完整的真实日志：有轮次/工具/模型输出，且以 finish→stats 收尾
+    （历史样例格式兼容性回归，新增样例须同样能被回放器解析）。
+    """
+    import sim_agent  # 复用回放器：样例发现 + 日志解析
+
+    samples = sim_agent.list_samples()
+    assert len(samples) >= 1, "tests/ 至少应有一份样例数据"
+    for path in samples:
+        events, meta = sim_agent.parse_log(path)
+        kinds = [e["kind"] for e in events]
+        for need in ("round", "tool", "output", "finish", "stats"):
+            assert need in kinds, f"{os.path.basename(path)} 缺 {need} 事件"
+        assert kinds[-2:] == ["finish", "stats"], \
+            f"{os.path.basename(path)} 结尾非 finish→stats: {kinds[-2:]}"
+        assert sum(1 for k in kinds if k == "tool") >= 1, \
+            f"{os.path.basename(path)} 无工具调用"
+        assert isinstance(meta["seed_value"], int) and isinstance(meta["seed_index"], int)
+        print(f"  样例 {os.path.basename(path)} OK: 种子 区域{meta['seed_index']}={meta['seed_value']}，"
+              f"轮次 {kinds.count('round')}，工具 {kinds.count('tool')}，输出 {kinds.count('output')}")
+    print(f"样例数据 OK: 共 {len(samples)} 份，全部可解析且结构完整")
+
+
 def main():
     # 1. 初始化与种子锁定
     xor_world.init(seed_value=5, seed_index=0)
@@ -171,6 +196,9 @@ def main():
     xor_world.set_region(2, 0)
     assert 2 not in xor_world.unset_regions(), "刻意设 a=0 不应计入未设定"
     print("0 歧义 OK: 刻意纯黑 a=0 视为已设定；未设定=未点击过")
+
+    # 6d. 多样例数据可解析性（sim_agent 回放器 parse_log 全量覆盖 tests/example_data*.txt）
+    test_sample_data()
 
     # 7. evaluate / view_region / tools 分派
     print(xor_world.evaluate())

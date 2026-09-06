@@ -43,7 +43,7 @@ xor-agent/
 ├── tests/                  # 自测与测试工具
 │   ├── selftest.py         # 离线自测（不依赖 API，交付前必跑）
 │   ├── sim_agent.py        # 模拟 Agent 回放器
-│   └── example_data.txt    # 模拟 Agent 样例数据（真实日志回放）
+│   └── example_data*.txt  # 模拟 Agent 样例数据（真实日志，可多份，--data 选择）
 ├── web/index.html          # 实时决策可视化页（原生 JS，SSE 订阅 /events 实时渲染）
 ├── context-log/            # 排查/实测记录（一个主题一个文件）
 ├── Interactive Drawing XOR.html  # 原始画布作品
