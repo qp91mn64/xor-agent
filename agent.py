@@ -42,7 +42,7 @@ from logger import (
     write_log,
 )
 
-MODEL = "deepseek-v4-flash"
+MODEL = "deepseek-flash"
 
 # 终止条件（TECH_DESIGN.md）
 MAX_LOOPS = 30          # 一次循环 = 一次 API 请求
