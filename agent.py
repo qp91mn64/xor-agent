@@ -86,8 +86,9 @@ def _next_letter(letters):
 def init_run_dir():
     """创建本次运行的 output/<时间戳>/ 文件夹并返回路径（进程内幂等，重复调用返回同一路径）。
 
-    秒精度时间戳 + os.mkdir 原子创建：两个进程同秒启动（如 agent.py 与 sim_agent.py 同开）时，
-    后到者收到 FileExistsError 后加字母重试，保证每个进程拿到唯一文件夹。
+    秒精度时间戳 + 冲突时加字母后缀：两个进程同秒启动（如 agent.py 与 sim_agent.py 同开）时，
+    后到者发现文件夹已存在就加字母重试，保证每个进程拿到唯一文件夹。
+    用 makedirs 而非 mkdir：全新检出（output/ 尚未生成）时一并补建父目录。
     """
     global RUN_ID, RUN_DIR, REASONING_LIVE
     if RUN_DIR is not None:
@@ -97,11 +98,10 @@ def init_run_dir():
     while True:
         run_id = base + suffix
         path = os.path.join(OUT_ROOT, run_id)
-        try:
-            os.mkdir(path)
-        except FileExistsError:
+        if os.path.exists(path):
             suffix = _next_letter(suffix)
             continue
+        os.makedirs(path, exist_ok=True)
         RUN_ID, RUN_DIR = run_id, path
         REASONING_LIVE = os.path.join(path, "reasoning_live.json")
         return RUN_DIR
