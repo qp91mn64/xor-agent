@@ -4,7 +4,7 @@
 
 - **不得泄露密钥**，也不得尝试获取密钥。
 - **及时归档防丢失**：经验，方法，决策过程等，使用 context-log skill 归档。
-- **同一文件，串行修改**：一处改完才能修改下一处。改完用 Grep/Read 复查确认。
+- **同一文件，串行修改**：一处改完才能修改下一处；一条消息里不要放对同一文件的多次编辑。改完必须复查确认落盘。
 - 修完之后，进行一致性检查：代码内部，文档内部，以及代码与文档之间。
 
 ## 执行规则
@@ -40,6 +40,15 @@
 - 拿不准或不知道，就提问，或者如实承认。
 - 回答有依据，并尽可能找到原始出处。
 - 回答简洁一点。
+
+## 环境（DSH）
+
+- 平台：DeepSeek Harness（npm 包 `@deepseek-ai/dsh-desktop`），模型 `deepseek-flash`。2026-10-15 从 Trae 迁入。
+- `.agents/skills/` 下的 skill 由 DSH 自动发现并加载。
+- DSH 的 subagent 可并行改文件，串行改规则（见操作原则）在委托子代理时同样适用。
+- `.agents/skills-pending/`：暂不参与自动发现的 skill（browser-ui-test 待按 DSH 工具链重写）。
+- Windows 沙箱历史坑（`trae-sandbox` 进程管理、stdout 不回显、`Read` 的 UTF-8 行为）见 `context-log/` 中各文件的「迁移说明」小节，DSH 下待复核。
+- 沙箱提示 `grantWrite`/`SetNamedSecurityInfoW failed` 时，工作区根的 Windows 权限被挡；`context-log/2026-10-15_迁移DSH.md` 记录了现场与临时恢复目录。
 
 ## 其他
 

@@ -41,3 +41,8 @@
 - Trae 官方 Skills 文档（内置 skill 列表）：https://docs.trae.ai/ide/skills
 - Trae Skills 最佳实践（开放 Agent Skills 标准）：https://www.trae.ai/blog/trae_tutorial_0115
 - 官方论坛"trae 是开源的吗"：https://forum.trae.cn/t/topic/2824
+
+## 迁移说明（2026-10-15，迁至 DSH）
+- 上文所述的"Trae 内置 skill 与本项目 skill 重叠"场景随迁移消失：DSH 不在本地内置浏览器 skill，本决策第 1～3 条结论（保留项目 skill、不删、维持 clean-room 沉淀）继续有效。
+- 项目 skill 已从 `.trae/skills/browser-ui-test/` 移到 `.agents/skills-pending/browser-ui-test/`，暂不参与 DSH 自动发现，原因是其中的浏览器驱动步骤依赖 Trae 的 browser_use 子代理，DSH 无此工具，待按 DSH 工具链重写后再移回 `.agents/skills/`。
+- 第 4 条"可选优化（措辞错开触发）"因内置 skill 不再存在而作废；第 5 条（公开发布时无署名义务）不受影响。

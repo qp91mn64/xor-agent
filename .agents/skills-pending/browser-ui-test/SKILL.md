@@ -5,6 +5,11 @@ description: "用模拟数据流探针驱动浏览器实测前端交互（滚动
 
 # 探针驱动的浏览器 UI 实测
 
+> **状态（2026-10-15）**：本 skill 已从 `.agents/skills/` 移到 `.agents/skills-pending/`，暂不参与 DSH 自动发现。
+> 原因：「操作步骤」第 3 步依赖 Trae 的 `browser_use` 子代理与 `browser_navigate`/`browser_evaluate`/`browser_console_messages` 工具，DeepSeek Harness（DSH）中没有这些工具。
+> 探针部分（第 1、2 步与 `probe_template.py`）与工具无关，仍可用；第 3、4 步待按 DSH 工具链（如 Playwright / CDP 直连浏览器）实测后重写，再移回 `.agents/skills/`。
+> 其中「Windows 沙箱」相关坑（终端 wrapper 退出后 python 仍存活、stdout 不回显）出自 Trae 环境，DSH 下待复核。
+
 ## 适用场景与必备条件
 
 **适用场景**

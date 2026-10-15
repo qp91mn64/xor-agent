@@ -14,7 +14,7 @@
 
 Vibe Coding。
 
-AI 编程工具：Trae + 自定义模型。
+AI 编程工具：目前用的 DeepSeek Harness（DSH，会话配置里的模型名为 `deepseek-flash`）。最开始用的 Trae，2026-10-15 迁入 DSH。
 
 模型，开发以及项目内 Agent 用：最开始用的 Deepseek-V4-Flash-0731；后续由于旧模型下线，改用 DeepSeek-V4.1-Flash。通过 DeepSeek API 调用。
 
@@ -48,9 +48,11 @@ python agent.py --seed 5
 
 ```
 xor-agent/
-├── .trae/skills/                   # 可复用方法
-│   ├── browser-ui-test/                # 用探针脚本的浏览器 UI 测试 skill
-│   └── context-log/                    # 存档上下文 skill
+├── .agents
+│   ├── skills/                     # 可复用方法（DSH 自动发现）
+│   │   └── context-log/                # 存档上下文 skill
+│   └── skills-pending/             # 暂不参与自动发现
+│       └── browser-ui-test/            # 用探针脚本的浏览器 UI 测试 skill（待按 DSH 工具链重写）
 ├── context-log/                    # 排查/实测记录
 ├── tests/                          # 测试
 │   ├── selftest.py                     # 离线自测

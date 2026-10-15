@@ -23,7 +23,7 @@ write_reasoning_live（思考流式）+ set_region/view_region/evaluate（工具
     python tests/sim_agent.py --dry-run         # 只解析日志打印事件统计，不启动服务/不回放
 
 浏览器实测：回放期间访问 http://127.0.0.1:<端口>/ 观察思考逐批流入、63 次点击逐步
-填满画布、结束状态变为 success。实测方法见 .trae/skills/browser-ui-test/。
+填满画布、结束状态变为 success。实测方法见 .agents/skills-pending/browser-ui-test/（暂未参与 DSH 自动发现，待按 DSH 工具链重写）。
 """
 
 import argparse

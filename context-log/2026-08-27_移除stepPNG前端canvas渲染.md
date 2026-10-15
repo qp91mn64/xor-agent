@@ -52,3 +52,10 @@
 - 批量并行 Edit 同一文件曾出现「部分编辑未落盘」：编辑后必须 Grep/Read 复查确认（AGENTS.md 串行改规则）。
 - 本机 HTTP 服务的截图/渲染验证可用 browser_use 子代理 + `browser_evaluate`（本环境不返回脚本值，需经 document.title 中转取值）。
 - trae-sandbox 终端不回显 stdout：重定向到文件再 Read 才能拿到输出。
+
+## 迁移说明（2026-10-15，迁至 DSH）
+- 上文是 Trae 环境（trae-sandbox + browser_use 子代理 + Trae 编辑工具）的实测记录，正文保持原样。
+- 「经验」第 1 条（批量并行 Edit 同一文件会部分未落盘）在 DSH 下同样成立，规则保留但不再绑定工具名：见 `AGENTS.md`「操作原则」——一处改完才能改下一处，一条消息里不要放对同一文件的多次编辑，改完必须复查确认落盘。
+- 「经验」第 2 条（browser_use 子代理 + `browser_evaluate`）在 DSH 下不适用：DSH 无 browser_use 子代理；skill 已移到 `.agents/skills-pending/browser-ui-test/`，浏览器驱动步骤待重写。
+- 「经验」第 3 条（stdout 不回显）迁至 DSH 后待复核。
+- 「遗留」的 `sim_agent.py` 完整回放中断问题未定位，仍建议在正常终端复核，与本次迁移无关。

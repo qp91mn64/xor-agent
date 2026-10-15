@@ -4,7 +4,7 @@
 1. 复制本文件到项目根目录改名 probe_<场景>.py（如 probe_follow.py）；
    按被测场景调整 pump()：铺历史（轮数/文本长度）、持续追加（是否逐次增长模拟"移动靶"）。
 2. 后台启动：python -u probe_<场景>.py（print 已 flush，可读实际端口）。
-3. browser_use 子代理 navigate 到 http://127.0.0.1:<port>/ 实测。
+3. browser_use 子代理 navigate 到 http://127.0.0.1:<port>/ 实测（browser_use 是 Trae 工具，DSH 无此工具，见 SKILL.md 头部状态说明）。
 4. 测完清理：进程可能脱离终端 wrapper 存活 → netstat 找 PID + taskkill（见 SKILL.md 操作步骤）。
 """
 import threading
