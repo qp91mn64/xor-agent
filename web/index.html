@@ -29,8 +29,8 @@
   .ghead { color: #9cf; font-weight: bold; }
   .cells { margin: 2px 0; }
   .cell b { color: #fc9; }
-  .prev { color: #888; }
   .why { color: #8c8; margin-top: 2px; white-space: pre-wrap; }
+  .answer { color: #ddd; margin-top: 4px; white-space: pre-wrap; border-left: 3px solid #9cf; padding-left: 8px; }
 </style>
 </head>
 <body>
@@ -129,7 +129,7 @@ function render(s) {
       (s.final_reason ? ` · 结束原因: ${s.final_reason}` : '');
   drawCanvas(s.grid);
   drawParamGrid(s.grid, s.seed_index);
-  drawTimeline(s.clicks);
+  drawTimeline(s);
 }
 function drawCanvas(grid) {
   // 主画布：用 grid 在 canvas 复刻后端 (dx^dy) & a 渲染（512×512，每区 64×64 像素），无需后端 PNG。
@@ -187,42 +187,100 @@ function drawParamGrid(grid, seed) {
     }
   }
 }
-function drawTimeline(clicks) {
-  // 按 round 分组：同一轮（一次 API 请求）的多次点击共享一次思考，合并显示。
-  // 进行中轮（reasoning_live 有内容）的思考显示当前累积全文（跟随 delta 到达）；历史轮显示完整思考。
-  const groups = [];
-  for (const c of clicks) {
-    const last = groups[groups.length - 1];
-    if (last && last.round === c.round) {
-      last.items.push(c);
-    } else {
-      groups.push({ round: c.round, reasoning: c.reasoning || '', items: [c] });
+function timelineModel(s) {
+  // 时间线数据源 = state.rounds（每轮一条：思考 + 点击轨迹 + 模型正文）；
+  // 渲染顺序 = 真实发生的顺序：思考（流式）→ 点击轨迹 → 模型正文。
+  // 不再从 clicks[].reasoning 取思考：只查看/只评估/只输出总结的轮次没有点击，
+  // 那条通道会让这些轮的思考在界面上静默消失（2026-10-17 修复）。
+  // 兼容旧 state.json（clicks 里带 reasoning、无 rounds）：由 clicks 回退重建分组。
+  const clicks = s.clicks || [];
+  const rounds = s.rounds || [];
+  const byRound = new Map();
+  const blank = r => ({ round: r, reasoning: '', content: '', calls: [], tools: {}, clicks: [] });
+  for (const r of rounds) {
+    byRound.set(r.round, { round: r.round, reasoning: r.reasoning || '', content: r.content || '',
+                           calls: r.calls || [], tools: r.tools || {}, clicks: [] });
+  }
+  if (!rounds.length) {  // 旧格式回退：思考挂在 clicks 上
+    for (const c of clicks) {
+      if (!byRound.has(c.round)) byRound.set(c.round, Object.assign(blank(c.round), { reasoning: c.reasoning || '' }));
+      byRound.get(c.round).clicks.push(c);
+    }
+  } else {
+    for (const c of clicks) {
+      if (!byRound.has(c.round)) byRound.set(c.round, blank(c.round));
+      byRound.get(c.round).clicks.push(c);
     }
   }
-  const parts = [];
-  for (const g of groups.slice(-20)) {
-    const isLive = liveRound > 0 && g.round === liveRound;
-    const reason = isLive ? liveText : g.reasoning;
-    const head = `第 ${g.round ?? '?'} 轮 · ${g.items.length} 格` + (isLive ? ' · 思考中…' : '');
-    parts.push(
-      '<div class="group">' +
-      `<div class="ghead">${head}</div>` +
-      (reason ? `<div class="why">${esc(reason)}</div>` : '') +
-      '<div class="cells">' + g.items.map(c =>
-        `#${c.index}→<b>${c.value}</b><span class="prev">(原${c.prev})</span>`
-      ).join(' ') + '</div></div>'
-    );
+  const items = [...byRound.values()];
+  // 进行中的轮（思考正在流式到达、该轮记录还没落盘）：把实时全文并进**同一轮**那一组，
+  // 不新开一组——否则会出现两个「第 N 轮」小标题，且后到的点击组把思考与点击割开，
+  // 点击行看起来"夹在中间"（2026-10-17 用户实测：流式过程中老问题复现）。
+  const maxRecorded = rounds.length ? Math.max(...rounds.map(r => r.round)) : -1;
+  const maxSeen = items.length ? Math.max(...items.map(g => g.round)) : -1;
+  const liveGroup = items.find(g => g.round === liveRound);
+  if (liveGroup && liveRound > maxRecorded) {
+    liveGroup.reasoning = liveText;  // 本轮流式进行中：实时全文覆盖显示
+    liveGroup.live = true;
+  } else if (!liveGroup && liveText && liveRound > maxSeen) {
+    items.push({ round: liveRound, reasoning: liveText, content: '', calls: [], tools: {},
+                 clicks: [], live: true });
   }
-  // 当前轮还没有任何点击（刚开新一轮，或 evaluate/view 轮）：单独追加一组，实时显示思考
-  if (liveRound > 0 && !groups.some(g => g.round === liveRound)) {
-    parts.push(
-      '<div class="group">' +
-      `<div class="ghead">第 ${liveRound} 轮 · 0 格 · 思考中…</div>` +
-      (liveText ? `<div class="why">${esc(liveText)}</div>` : '') +
-      '</div>'
-    );
+  items.sort((a, b) => (a.round ?? 0) - (b.round ?? 0));
+  // 不截断历史轮次：信息可见优先于渲染量（卡内可滚动、可翻到底）。
+  // 曾硬编码只渲染最新 20 组，`--rounds 30` 时前 10 轮会再次无声消失。
+  return items;
+}
+function toolBrief(tools) {
+  // 组头的"这轮做了什么"概览（如「设定×16」）；每次调用的参数与结果按顺序排在下面
+  const order = ['view_region', 'evaluate', 'set_region'];
+  const names = { set_region: '设定', view_region: '查看', evaluate: '评估' };
+  const keys = order.filter(k => (tools || {})[k])
+    .concat(Object.keys(tools || {}).filter(k => !order.includes(k)));
+  return keys.map(k => `${names[k] || k}×${tools[k]}`).join(' ');
+}
+function groupHead(g, isLive) {
+  // 标题一行给全"这轮做了什么"：格数 + 工具调用次数（如「15 格 · 设定×15」「评估×1」）
+  const n = g.clicks.length;
+  const brief = toolBrief(g.tools);
+  const stats = [n ? `${n} 格` : '', brief].filter(Boolean).join(' · ');
+  return `第 ${g.round ?? '?'} 轮` + (stats ? ` · ${stats}` : '') + (isLive ? ' · 思考中…' : '');
+}
+let liveWhyEl = null;  // 进行中轮次的思考节点：delta 到达只更新该节点文本，不整体重绘时间线
+function renderGroups(items) {
+  // 每轮按时间顺序：思考 → 点击轨迹（紧凑一行）→ 模型正文。
+  // **不展开工具调用与结果**（如「评估进度 → 已设定 0/63 …」）：人类读者要的是轨迹，
+  // 完整参数与结果留在 output/<运行ID>/state.json 的 rounds[].calls 里，按需查看。
+  return items.map(g => {
+    const cells = g.clicks.length
+      ? '<div class="cells">' + g.clicks.map(c =>
+          `#${c.index}→<b>${c.value}</b><span class="prev">(原${c.prev})</span>`).join(' ') + '</div>'
+      : '';
+    return '<div class="group">' +
+      `<div class="ghead">${groupHead(g, !!g.live)}</div>` +
+      (g.reasoning ? `<div class="why"${g.live ? ' id="live-why"' : ''}>${esc(g.reasoning)}</div>` : '') +
+      cells +
+      (g.content ? `<div class="answer">${esc(g.content)}</div>` : '') +
+      '</div>';
+  }).join('');
+}
+let lastSig = '';  // 时间线结构签名：相同则只做定点文本更新（见 drawTimeline）
+function drawTimeline(s) {
+  // 结构签名刻意不含「进行中轮次」的思考长度：流式期间签名不变 → 不重建 DOM，
+  // 只把最新全文写进 #live-why 文本节点。轮次落盘/新点击/新轮次出现才重建。
+  const items = timelineModel(s);
+  const sig = JSON.stringify(items.map(g => [g.round, g.live ? -1 : g.reasoning.length,
+                                             g.content.length, g.clicks.length, g.live, toolBrief(g.tools)]));
+  if (sig !== lastSig) {
+    lastSig = sig;
+    TIMELINE.innerHTML = renderGroups(items) || '<div style="color:#888">暂无数据</div>';
+    liveWhyEl = $('live-why');
+  } else {
+    const live = items.find(g => g.live);
+    if (live && liveWhyEl && liveWhyEl.textContent !== live.reasoning) {
+      liveWhyEl.textContent = live.reasoning;  // 显示速度 = delta 到达速度 = 终端速度
+    }
   }
-  $('timeline').innerHTML = parts.join('') || '<div style="color:#888">暂无数据</div>';
   scrollToBottomIfFollow();  // 新内容渲染后：在底部则跟随到底，翻历史则保持不动
 }
 function esc(s) {

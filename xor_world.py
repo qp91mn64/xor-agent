@@ -30,7 +30,8 @@ state = {
     "grid": None,          # list[64]：每区参数值
     "seed_index": 0,
     "seed_value": 0,
-    "clicks": [],          # [{index, value, prev, reasoning}]：点击轨迹（决策可视化用）
+    "clicks": [],          # [{index, value, prev, round}]：点击轨迹（决策可视化用）
+    "rounds": [],          # [{round, reasoning, content, tools, calls, clicks}]：按轮决策记录（唯一权威来源）
     "status": "running",
     "final_reason": "",
 }
@@ -44,6 +45,7 @@ def init(seed_value=0, seed_index=0):
     state["seed_index"] = seed_index
     state["seed_value"] = seed_value
     state["clicks"] = []
+    state["rounds"] = []
     state["status"] = "running"
     state["final_reason"] = ""
 
@@ -70,11 +72,42 @@ def black_ratio(canvas=None):
     return float((canvas == 0).mean())
 
 
-def set_region(index, value, reasoning=None, round_id=None):
+def record_round(round_id, reasoning=None, content=None, calls=None):
+    """落一轮的决策记录到 state["rounds"]（可视化唯一权威来源）。
+
+    一轮 = 一次 API 请求（agent 主循环的一轮；模拟回放同构）。思考/正文由调用方在
+    请求结束后一次性传入——**不能只挂在点击条目上**：只查看/只评估、以及最后输出
+    总结的轮次没有 set_region 点击，挂在点击上会让这些轮的思考在任何地方都不落盘、
+    界面上静默消失（2026-10-17 修复的 bug 根因）。
+
+    calls：本轮工具调用列表，**按实际调用顺序**记录 `{"name", "args", "result"}`。
+    可视化据此按时间顺序显示「思考 → 工具调用 → 工具结果 → 模型正文」——真实运行里
+    工具结果是模型决策的直接依据（终端也在打印），只在 state 里存"点击"会让网页丢失
+    这段因果；只存计数更会连顺序一起丢掉。
+    """
+    state["rounds"].append({
+        "round": round_id,
+        "reasoning": reasoning or "",
+        "content": content or "",
+        "calls": calls or [],
+        "tools": _tool_counts(calls),  # 计数视图：无点击轮次靠它一眼看出"这轮做了什么"
+        "clicks": sum(1 for c in state["clicks"] if c["round"] == round_id),
+    })
+
+
+def _tool_counts(calls):
+    """工具调用次数统计 {"set_region": n, "view_region": n, ...}（便于阅读，顺序信息在 calls）"""
+    counts = {}
+    for c in calls or []:
+        counts[c["name"]] = counts.get(c["name"], 0) + 1
+    return counts
+
+
+def set_region(index, value, round_id=None):
     """set_region 工具：为区域 index 设定参数值 value（模拟一次点击）
 
-    reasoning：模型本轮思考（一轮一次，同一轮内所有点击共享，供可视化按轮分组）；
-    round_id：当前循环轮次（一轮 = 一次 API 请求），用于时间线分组。
+    round_id：当前循环轮次（一轮 = 一次 API 请求），用于时间线按轮分组；本轮思考
+    由 record_round 按轮记录，不在此处重复保存。
     """
     if not (0 <= index < ROWS * COLS):
         return f"Invalid: index {index} 超出范围 0-63"
@@ -85,8 +118,7 @@ def set_region(index, value, reasoning=None, round_id=None):
     prev = state["grid"][index]
     state["grid"][index] = value
     state["clicks"].append({
-        "index": index, "value": value, "prev": prev,
-        "reasoning": reasoning or "", "round": round_id,
+        "index": index, "value": value, "prev": prev, "round": round_id,
     })
     return (f"区域 {index}（第{index // COLS}行第{index % COLS}列）已设为 {value}：{pattern_description(value)}"
             f"。原先为 {prev}：{pattern_description(prev)}")

@@ -62,8 +62,11 @@ def _require_int(arguments, key):
     return v, None
 
 
-def execute_tool(name, arguments, reasoning=None, round_id=None):
-    """执行工具并返回结果文本；reasoning 为模型本轮思考，round_id 为循环轮次，均记录进点击轨迹"""
+def execute_tool(name, arguments, round_id=None):
+    """执行工具并返回结果文本；round_id 为循环轮次，随 set_region 记入点击轨迹
+
+    （本轮思考不再随点击保存：由 xor_world.record_round 按轮记录，见 agent 主循环）
+    """
     if name == "set_region":
         index, err = _require_int(arguments, "index")
         if err:
@@ -71,7 +74,7 @@ def execute_tool(name, arguments, reasoning=None, round_id=None):
         value, err = _require_int(arguments, "value")
         if err:
             return err
-        return xor_world.set_region(index, value, reasoning, round_id)
+        return xor_world.set_region(index, value, round_id)
     if name == "view_region":
         index, err = _require_int(arguments, "index")
         if err:

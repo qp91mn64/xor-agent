@@ -42,7 +42,17 @@ python agent.py --seed 5
 ```
 未配置 `DEEPSEEK_API_KEY` 时程序不退出：服务照常启动，网页显示配置引导，填好保存后自动开始运行（无需重启）。
 
-打开浏览器，可实时看到 AI 每次"点击"后的画布、参数示意图与 AI 思考过程。AI 思考过程在命令行与可视化界面同步显示。
+打开浏览器，可实时看到 AI 每次"点击"后的画布、参数示意图与 AI 决策过程。决策过程**按真实发生的时间顺序**一轮接一轮显示：每轮的思考 → 点击轨迹 → 模型正文；组头一行概括这轮做了什么（如 `第 5 轮 · 15 格 · 设定×15`、`第 6 轮 · 评估×1`）。**每一轮的思考与模型正文都按轮留档**（只查看/只评估/只输出总结的轮次同样保留），运行结束后仍可在时间线上回看；完整的工具参数与结果存在 `output/<运行ID>/state.json` 的 `rounds[].calls` 里按需查看（界面不展开）。AI 思考过程在命令行与可视化界面同步显示。
+
+## 快速测试
+
+```powershell
+python tests/selftest.py        # 离线自测（渲染/工具/快照/按轮记录回归）；改动代码后先跑
+python tests/sim_agent.py       # 模拟 Agent 测试，不消耗 tokens，也可测试前端 UI
+python tests/check_timeline.py  # 测试模型输出是否可见
+```
+
+详见各测试代码。
 
 ## 项目结构
 
@@ -56,7 +66,8 @@ xor-agent/
 ├── context-log/                    # 排查/实测记录
 ├── tests/                          # 测试
 │   ├── selftest.py                     # 离线自测
-│   ├── sim_agent.py                    # 模拟 Agent 回放器
+│   ├── sim_agent.py                    # 模拟 Agent 测试
+│   ├── check_timeline.py               # 测试模型输出是否可见
 │   └── example_data*.txt               # 模拟 Agent 样例数据
 ├── web/index.html                  # 可视化
 ├── .gitignore

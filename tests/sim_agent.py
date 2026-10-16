@@ -1,9 +1,13 @@
 """模拟 Agent 回放器（可复用测试工具，常驻 tests/，与 selftest.py 同类）。
 
 解析 tests/example_data*.txt（真实详细日志）并按真实时间线回放：按事件顺序驱动
-write_reasoning_live（思考流式）+ set_region/view_region/evaluate（工具）+ snap（快照），
-浏览器可实测完整决策过程 UI（思考流式 / 点击轨迹 / 画布填充 / 热力图 / 结束状态），
-不消耗 API token。
+write_reasoning_live（思考流式）+ set_region/view_region/evaluate（工具）+ snap（快照）
++ xor_world.record_round（每轮思考/正文/工具统计落盘），浏览器可实测完整决策过程 UI
+（思考流式 / 点击轨迹 / 画布填充 / 参数示意图 / 结束状态与最终总结），不消耗 API token。
+
+回放链路与真实 agent 主循环同构：一轮（= 一次 API 请求）的思考在「本轮请求耗时」内
+流式流出，该轮 output 事件（模型正文）到达时把整轮记录落进 state.rounds——**没有
+set_region 点击的轮次（只查看/只评估/只输出总结）同样留档**，与真实运行一致。
 
 样例文件可有多份（tests/example_data*.txt，如 example_data.txt、example_data_2.txt），
 启动时列出可选清单；不带 --data 默认回放 example_data.txt（向后兼容旧用法）。
@@ -23,7 +27,9 @@ write_reasoning_live（思考流式）+ set_region/view_region/evaluate（工具
     python tests/sim_agent.py --dry-run         # 只解析日志打印事件统计，不启动服务/不回放
 
 浏览器实测：回放期间访问 http://127.0.0.1:<端口>/ 观察思考逐批流入、63 次点击逐步
-填满画布、结束状态变为 success。实测方法见 .agents/skills-pending/browser-ui-test/（暂未参与 DSH 自动发现，待按 DSH 工具链重写）。
+填满画布、结束状态变为 success、最后一轮的最终总结显示在它所属轮次里；不打开浏览器时
+可用 `python tests/check_timeline.py output/<运行ID>/state.json` 断言"每轮思考与正文都可见"。
+实测方法见 .agents/skills-pending/browser-ui-test/（暂未参与 DSH 自动发现，待按 DSH 工具链重写）。
 """
 
 import argparse
@@ -238,9 +244,26 @@ def replay(events, meta, speed=1.0, port=8765, no_open=False, exit_after=False,
 
     agent.snap()  # 初始快照
     round_reasoning = {}
+    round_calls = {}      # {轮次: [{name, args, result}]}：按调用顺序，网页据此按时间顺序显示工具结果
+    round_content = {}    # {轮次: 模型正文}：该轮 output 事件（末轮即最终总结）
     tool_count = 0
     click_count = 0
     cur_round = 0
+    recorded = set()      # 已落盘的轮次（output 事件到达时落轮，与真实链路 record_round 对齐）
+
+    def record_cur_round():
+        """把当前轮的思考/正文/工具调用落进 state.rounds（幂等，重复调用只落一次）"""
+        if cur_round in recorded or cur_round <= 0:
+            return
+        if not (round_reasoning.get(cur_round) or round_content.get(cur_round)):
+            return  # 该轮没有任何思考/正文（空轮）就不落空记录
+        recorded.add(cur_round)
+        xor_world.record_round(cur_round,
+                               reasoning=round_reasoning.get(cur_round, ""),
+                               content=round_content.get(cur_round, ""),
+                               calls=round_calls.get(cur_round, []))
+        agent.snap()
+
     # 回放节奏 = 日志时间戳倒推：事件间隔按 ts 差推进；think 特殊处理（见下）。
     prev_ts = meta.get("first_ts") or events[0]["ts"]
     min_gap = 0.2 / speed  # 同秒事件的最小间隔：日志秒级精度丢失轮内亚秒时序，保留点击轨迹逐点可见
@@ -266,16 +289,19 @@ def replay(events, meta, speed=1.0, port=8765, no_open=False, exit_after=False,
             print(f"\n--- 第 {cur_round} 次循环 ---", flush=True)
         elif kind == "tool":
             tool_count += 1
-            result = tools.execute_tool(ev["name"], ev["args"],
-                                        reasoning=round_reasoning.get(cur_round, ""),
-                                        round_id=cur_round)
+            result = tools.execute_tool(ev["name"], ev["args"], round_id=cur_round)
+            round_calls.setdefault(cur_round, []).append(
+                {"name": ev["name"], "args": ev["args"], "result": result})
             if ev["name"] == "set_region" and not result.startswith("Invalid"):
                 click_count += 1
             brief = result if len(result) <= 60 else result[:60] + "…"
             print(f"  [{tool_count}] {ev['name']} {ev['args']} -> {brief}", flush=True)
             agent.snap()
         elif kind == "output":
+            # 该轮模型的正文输出（末轮即最终总结）：按轮落盘，web 时间线随轮显示
+            round_content[cur_round] = ev["text"]
             print(f"  模型输出: {ev['text']}", flush=True)
+            record_cur_round()
         elif kind == "finish":
             xor_world.state["status"] = "success" if ev["ok"] else "incomplete"
             xor_world.state["final_reason"] = ev["reason"]
@@ -285,6 +311,7 @@ def replay(events, meta, speed=1.0, port=8765, no_open=False, exit_after=False,
                   flush=True)
 
     # 结束快照 + 数据完整性校验（样例数据是否被完整用完）
+    record_cur_round()  # 兜底：样例若无 output 事件（截断日志）也要落最后一轮
     xor_world.state["status"] = xor_world.state.get("status", "running")
     agent.snap()
     unset = xor_world.unset_regions()

@@ -123,6 +123,43 @@ def test_pattern_desc():
     print("图案描述读取 OK: md 无 BOM/章节齐全；128 个值全覆盖，负值反色口径一致")
 
 
+def test_record_round():
+    """按轮记录回归（2026-10-17 可视化 bug）：没有 set_region 点击的轮次，思考/正文同样必须落盘。
+
+    原实现把本轮思考塞进 clicks[].reasoning：只查看/只评估/只输出总结的轮次没有点击，
+    思考就无处落盘、界面上静默消失（实测 3 份真实运行日志各有 3-4 轮中招，第 1 轮
+    5-8 万字符思考全丢）。这里锁死新口径：record_round 与点击无关，且**工具调用的参数与
+    结果按调用顺序**落进 calls（可视化据此按时间顺序显示"思考 → 工具调用 → 结果"）。
+    """
+    xor_world.init(seed_value=7, seed_index=3)
+    # 第 1 轮：只看一眼（无 set_region 点击）
+    xor_world.record_round(1, reasoning="第一轮思考" * 3, content="先看看种子",
+                           calls=[{"name": "view_region", "args": {"index": 3}, "result": "区域 3 当前值 7"}])
+    r1 = xor_world.state["rounds"][-1]
+    assert r1["clicks"] == 0
+    assert r1["reasoning"].startswith("第一轮思考")
+    assert r1["content"] == "先看看种子"
+    assert r1["calls"][0]["result"] == "区域 3 当前值 7"      # 工具结果必须落盘（原来只在日志里）
+    assert r1["tools"] == {"view_region": 1}                  # 计数视图由 calls 派生
+    # 第 2 轮：两次点击，工具调用顺序与结果保留
+    xor_world.set_region(1, 5, round_id=2)
+    xor_world.set_region(2, 6, round_id=2)
+    xor_world.record_round(2, reasoning="第二轮思考", content="",
+                           calls=[{"name": "set_region", "args": {"index": 1, "value": 5}, "result": "已设为 5"},
+                                  {"name": "set_region", "args": {"index": 2, "value": 6}, "result": "已设为 6"}])
+    # 第 3 轮：只输出总结（无点击，正文就是最终总结）
+    xor_world.record_round(3, reasoning="第三轮思考", content="最终总结正文", calls=[])
+    rounds = xor_world.state["rounds"]
+    assert [r["round"] for r in rounds] == [1, 2, 3], rounds
+    assert [r["clicks"] for r in rounds] == [0, 2, 0], rounds
+    assert all(r["reasoning"] for r in rounds), "每轮思考都必须落盘（含无点击轮次）"
+    assert rounds[2]["content"] == "最终总结正文"
+    assert [c["args"]["index"] for c in rounds[1]["calls"]] == [1, 2], "工具调用必须按调用顺序保存"
+    # 点击轨迹不再重复保存思考（按轮存一份即可）
+    assert all("reasoning" not in c for c in xor_world.state["clicks"]), xor_world.state["clicks"]
+    print("按轮记录 OK: 无点击轮次的思考/正文照样落盘；工具调用与结果按顺序保存；clicks 不再重复存思考")
+
+
 def test_sample_data():
     """多份样例数据可解析性（回放器 parse_log）：tests/example_data*.txt 全量遍历。
 
@@ -143,6 +180,11 @@ def test_sample_data():
         assert sum(1 for k in kinds if k == "tool") >= 1, \
             f"{os.path.basename(path)} 无工具调用"
         assert isinstance(meta["seed_value"], int) and isinstance(meta["seed_index"], int)
+        # 每轮思考都必须能被回放到 web（无点击轮次也要有 think 事件，否则界面上无法出现）
+        rounds = {e["round"] for e in events if e["kind"] == "round"}
+        thinks = {e["round"] for e in events if e["kind"] == "think"}
+        assert thinks == rounds, \
+            f"{os.path.basename(path)} 有轮次没有思考事件: {sorted(rounds - thinks)}"
         print(f"  样例 {os.path.basename(path)} OK: 种子 区域{meta['seed_index']}={meta['seed_value']}，"
               f"轮次 {kinds.count('round')}，工具 {kinds.count('tool')}，输出 {kinds.count('output')}")
     print(f"样例数据 OK: 共 {len(samples)} 份，全部可解析且结构完整")
@@ -226,7 +268,10 @@ def main():
     # 11. HTTP 可视化服务冒烟测试（需先有快照）
     test_server()
 
-    # 12. 清理：删除本测试创建的运行文件夹（output/ 只应保留真实运行的存档）
+    # 12. 按轮记录回归（放在快照/服务测试之后：本项会重置 world 状态）
+    test_record_round()
+
+    # 13. 清理：删除本测试创建的运行文件夹（output/ 只应保留真实运行的存档）
     import shutil
     shutil.rmtree(agent.RUN_DIR, ignore_errors=True)
     print(f"已清理测试运行文件夹 output/{agent.RUN_ID}/")

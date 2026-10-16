@@ -443,65 +443,82 @@ def main():
     reason = ""
 
     loops = 0  # --rounds 0 时 for 循环不执行，避免统计日志引用未定义变量
+    msg = None       # 本轮模型返回；API 失败时保持 None（finally 里据此跳过本轮落盘）
+    reasoning = ""
+    round_calls = []  # 本轮工具调用（按调用顺序）[{name, args, result}]，落进 state.rounds[].calls
     for loops in range(1, args.rounds + 1):
-        write_log(f"--- 第 {loops} 次循环 ---", log_file)
-        print(f"[请求模型 第{loops}次] ", end="", flush=True)
-        t0 = time.monotonic()
-        try:
-            msg = chat_stream(client, messages, loops)
-        except Exception as exc:
-            clear_reasoning_live()
-            status = getattr(exc, "status_code", None)
-            write_log(
-                f"API 请求失败（第 {loops} 次循环）: {type(exc).__name__} status_code={status}",
-                log_file,
-            )
-            resp = getattr(exc, "response", None)
-            if resp is not None:
-                write_log(f"响应体: {resp.text}", log_file)
-            raise
-        write_log(f"本轮请求耗时 {time.monotonic() - t0:.1f}s", log_file)
-        messages.append(assistant_message(msg))
-        log_model_response(msg, log_file)
-
-        # 模型直接输出文字、不再调用工具
-        if not msg.tool_calls:
-            reason = "模型直接输出文字，未再调用工具"
-            break
-
-        reasoning = get_reasoning_content(msg)
-        for tc in msg.tool_calls:
-            tool_call_count += 1
-            name = tc.function.name
+        try:  # try 块覆盖整轮：本轮思考/正文/工具统计在 finally 里统一落盘
+            write_log(f"--- 第 {loops} 次循环 ---", log_file)
+            print(f"[请求模型 第{loops}次] ", end="", flush=True)
+            t0 = time.monotonic()
+            msg = None       # 本轮尚未拿到返回：上一轮的 msg 不得被 finally 误记到本轮
+            reasoning = ""
+            round_calls = []
             try:
-                arguments = json.loads(tc.function.arguments)
-            except json.JSONDecodeError:
-                arguments = {}
-            result = tools.execute_tool(name, arguments, reasoning=reasoning, round_id=loops)
-            log_tool_call(name, tc.id, arguments, result, log_file)
-            messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+                msg = chat_stream(client, messages, loops)
+            except Exception as exc:
+                clear_reasoning_live()
+                status = getattr(exc, "status_code", None)
+                write_log(
+                    f"API 请求失败（第 {loops} 次循环）: {type(exc).__name__} status_code={status}",
+                    log_file,
+                )
+                resp = getattr(exc, "response", None)
+                if resp is not None:
+                    write_log(f"响应体: {resp.text}", log_file)
+                raise
+            write_log(f"本轮请求耗时 {time.monotonic() - t0:.1f}s", log_file)
+            messages.append(assistant_message(msg))
+            log_model_response(msg, log_file)
+            reasoning = get_reasoning_content(msg)
 
-            snap()  # 每次工具调用后刷新可视化快照（快照 + SSE 广播）
-
-            if name == "set_region":
-                if result.startswith("Invalid"):
-                    consecutive_invalid += 1
-                    if consecutive_invalid >= MAX_INVALID:
-                        reason = f"连续 {MAX_INVALID} 次无效点击"
-                        break
-                else:
-                    consecutive_invalid = 0
-                    click_count += 1
-                    if click_count >= args.clicks:
-                        reason = f"点击达到 {args.clicks} 次"
-                        break
-
-            if tool_call_count >= MAX_TOOL_CALLS:
-                reason = f"工具调用达到 {MAX_TOOL_CALLS} 次"
+            # 模型直接输出文字、不再调用工具
+            if not msg.tool_calls:
+                reason = "模型直接输出文字，未再调用工具"
                 break
 
-        if reason:
-            break
+            for tc in msg.tool_calls:
+                tool_call_count += 1
+                name = tc.function.name
+                try:
+                    arguments = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    arguments = {}
+                result = tools.execute_tool(name, arguments, round_id=loops)
+                log_tool_call(name, tc.id, arguments, result, log_file)
+                # 按调用顺序记下"调了什么、拿到什么"：可视化据此按时间顺序显示工具结果
+                round_calls.append({"name": name, "args": arguments, "result": result})
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+
+                snap()  # 每次工具调用后刷新可视化快照（快照 + SSE 广播）
+
+                if name == "set_region":
+                    if result.startswith("Invalid"):
+                        consecutive_invalid += 1
+                        if consecutive_invalid >= MAX_INVALID:
+                            reason = f"连续 {MAX_INVALID} 次无效点击"
+                            break
+                    else:
+                        consecutive_invalid = 0
+                        click_count += 1
+                        if click_count >= args.clicks:
+                            reason = f"点击达到 {args.clicks} 次"
+                            break
+
+                if tool_call_count >= MAX_TOOL_CALLS:
+                    reason = f"工具调用达到 {MAX_TOOL_CALLS} 次"
+                    break
+
+            if reason:
+                break
+        finally:
+            # 本轮思考/正文/工具调用与结果落盘（含没有 set_region 点击的轮次：只查看、只评估、
+            # 以及最后只输出总结的轮次）。原实现把思考塞进 clicks[].reasoning、工具结果只进日志，
+            # 无点击的轮次思考无处落盘、网页上也没有工具结果——这是 2026-10-17 修复的可视化 bug 根因。
+            if msg is not None:  # API 失败（异常上抛）时本轮无模型返回，不记空记录
+                xor_world.record_round(loops, reasoning=reasoning, content=msg.content,
+                                       calls=round_calls)
+                snap()
 
     # 结果判定：依据画布状态，而非模型输出
     coverage = xor_world.coverage()
