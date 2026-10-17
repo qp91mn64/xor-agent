@@ -210,6 +210,19 @@ def main():
     assert xor_world.state["grid"][1] == 1
     print("合法点击 OK:", r)
 
+    # 3b. 单格设定上限：首次 + 2 次调整 = 3 次；第 4 次拒绝，且不带 Invalid 前缀
+    #     （带 Invalid 会被主循环计入"连续无效点击"，模型连撞 3 次上限就误终止）
+    for v in (1, 2, 3):
+        r = xor_world.set_region(5, v)
+        assert not r.startswith("Invalid"), r
+        assert f"第 {v}/3 次设定" in r, r
+    r = xor_world.set_region(5, 7)
+    assert not r.startswith("Invalid"), f"超上限不是参数错误，不得带 Invalid 前缀: {r}"
+    assert "已设定 3 次（上限 3 次）" in r and "未修改" in r, r
+    assert xor_world.state["grid"][5] == 3, xor_world.state["grid"][5]
+    assert xor_world.set_count(5) == 3, xor_world.set_count(5)
+    print("单格上限 OK:", r)
+
     # 4. 渲染
     canvas = xor_world.render()
     assert canvas.shape == (512, 512)

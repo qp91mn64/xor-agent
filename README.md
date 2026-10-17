@@ -38,9 +38,11 @@ python -m pip install -r requirements.txt
 python agent.py --seed 5
 # 可选：--seed-index -64 - 63 指定种子区域编号（默认 0）；
 ##     --port 端口（默认固定 8765，被占自动 fallback 随机）；
-##     --no-open 不自动打开浏览器；--rounds/--clicks 调整终止上限
+##     --no-open 不自动打开浏览器；--rounds 调整循环上限
 ```
 未配置 `DEEPSEEK_API_KEY` 时程序不退出：服务照常启动，网页显示配置引导，填好保存后自动开始运行（无需重启）。
+
+每个非种子区域最多设定 3 次（首次 + 2 次调整）：允许"核对后不一致就调整"，但不许反复刷同一格。没有总点击次数上限，点击数量由单格上限和工具调用上限（240 次）兜底。
 
 打开浏览器，可实时看到 AI 每次"点击"后的画布、参数示意图与 AI 决策过程。决策过程**按真实发生的时间顺序**一轮接一轮显示：每轮的思考 → 点击轨迹 → 模型正文；组头一行概括这轮做了什么（如 `第 5 轮 · 15 格 · 设定×15`、`第 6 轮 · 评估×1`）。**每一轮的思考与模型正文都按轮留档**（只查看/只评估/只输出总结的轮次同样保留），运行结束后仍可在时间线上回看；完整的工具参数与结果存在 `output/<运行ID>/state.json` 的 `rounds[].calls` 里按需查看（界面不展开）。AI 思考过程在命令行与可视化界面同步显示。
 
@@ -48,6 +50,7 @@ python agent.py --seed 5
 
 ```powershell
 python tests/selftest.py        # 离线自测（渲染/工具/快照/按轮记录回归）；改动代码后先跑
+python tests/fake_agent.py      # 假 Agent 回归：用假流式 client 跑真实主循环，验证终止条件与计数口径；不消耗 tokens
 python tests/sim_agent.py       # 模拟 Agent 测试，不消耗 tokens，也可测试前端 UI
 python tests/check_timeline.py  # 测试模型输出是否可见
 ```
@@ -66,6 +69,7 @@ xor-agent/
 ├── context-log/                    # 排查/实测记录
 ├── tests/                          # 测试
 │   ├── selftest.py                     # 离线自测
+│   ├── fake_agent.py                   # 假 Agent 回归（终止条件与计数口径）
 │   ├── sim_agent.py                    # 模拟 Agent 测试
 │   ├── check_timeline.py               # 测试模型输出是否可见
 │   └── example_data*.txt               # 模拟 Agent 样例数据

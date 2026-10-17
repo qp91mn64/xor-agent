@@ -22,6 +22,7 @@ HEIGHT = 512
 AREA = WIDTH // COLS  # 64
 DATA_MAX = 63
 DATA_MIN = ~DATA_MAX  # -64
+MAX_SET_PER_REGION = 3  # 同一非种子区域最多成功设定次数（首次 + 2 次调整）：允许调整，但不许反复刷同一格
 
 # 区域内像素坐标的 XOR 表：X[dx, dy] = dx ^ dy（64×64）
 _X = np.arange(AREA)[:, None] ^ np.arange(AREA)[None, :]
@@ -103,11 +104,23 @@ def _tool_counts(calls):
     return counts
 
 
+def set_count(index):
+    """该区域已成功设定的次数（以点击轨迹为准，与 unset_regions/coverage 同一数据源）"""
+    return sum(1 for c in state["clicks"] if c["index"] == index)
+
+
 def set_region(index, value, round_id=None):
     """set_region 工具：为区域 index 设定参数值 value（模拟一次点击）
 
     round_id：当前循环轮次（一轮 = 一次 API 请求），用于时间线按轮分组；本轮思考
     由 record_round 按轮记录，不在此处重复保存。
+
+    同一区域最多成功设定 MAX_SET_PER_REGION 次（首次 + 2 次调整）：模型按提示词要求
+    "核对后不一致就调整"时必会重设同一格（2026-08-25 实测：先用 1~4 号格试负值语义、
+    再按正式设计回改 3 格），但无上限时重复点击会吃掉整体预算（原来总点击上限 64，
+    64 次点击只覆盖 61 格就提前终止，见 context-log/2026-10-17_重复点击提前终止.md）。超上限的
+    返回**不带 "Invalid" 前缀**：它不是参数错误，不能被主循环的"连续无效点击"计数，
+    否则模型连撞 3 次上限就会以"连续 3 次无效点击"提前终止。
     """
     if not (0 <= index < ROWS * COLS):
         return f"Invalid: index {index} 超出范围 0-63"
@@ -115,13 +128,18 @@ def set_region(index, value, round_id=None):
         return f"Invalid: value {value} 超出范围 {DATA_MIN}..{DATA_MAX}"
     if index == state["seed_index"]:
         return f"Invalid: 区域 {index} 是种子区域（固定为 {state['seed_value']}），不可修改"
+    used = set_count(index)
+    if used >= MAX_SET_PER_REGION:
+        a = state["grid"][index]
+        return (f"区域 {index} 已设定 {used} 次（上限 {MAX_SET_PER_REGION} 次），本次未修改；"
+                f"当前值 {a}：{pattern_description(a)}")
     prev = state["grid"][index]
     state["grid"][index] = value
     state["clicks"].append({
         "index": index, "value": value, "prev": prev, "round": round_id,
     })
     return (f"区域 {index}（第{index // COLS}行第{index % COLS}列）已设为 {value}：{pattern_description(value)}"
-            f"。原先为 {prev}：{pattern_description(prev)}")
+            f"（第 {used + 1}/{MAX_SET_PER_REGION} 次设定）。原先为 {prev}：{pattern_description(prev)}")
 
 
 def view_region(index):

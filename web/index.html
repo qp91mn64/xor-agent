@@ -125,7 +125,7 @@ function render(s) {
   $('nokey').style.display = nokey ? '' : 'none';
   $('status').textContent = nokey
     ? '状态: 等待配置 DEEPSEEK_API_KEY'
-    : `状态: ${s.status} · 点击 ${s.clicks.length} 次` +
+    : `状态: ${s.status} · 点击 ${s.clicks.length} 次 · 已覆盖 ${new Set(s.clicks.map(c => c.index)).size}/${s.grid.length - 1} 格` +
       (s.final_reason ? ` · 结束原因: ${s.final_reason}` : '');
   drawCanvas(s.grid);
   drawParamGrid(s.grid, s.seed_index);

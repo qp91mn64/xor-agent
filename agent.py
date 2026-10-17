@@ -4,7 +4,6 @@
     python agent.py               默认参数（日志始终记录模型思考/工具调用/输出）
     python agent.py --seed 5      种子区域值（默认 0）
     python agent.py --rounds 30   最多循环次数（默认 30）
-    python agent.py --clicks 64   最多点击次数（默认 64）
     python agent.py --port 8765   可视化端口（默认固定 8765，被占时自动 fallback 随机）
     python agent.py --no-open     不自动打开浏览器
     python agent.py --help        查看帮助
@@ -46,9 +45,11 @@ MODEL = "deepseek-flash"
 
 # 终止条件（TECH_DESIGN.md）
 MAX_LOOPS = 30          # 一次循环 = 一次 API 请求
-MAX_CLICKS = 64         # set_region 成功一次记一次
-MAX_TOOL_CALLS = 96     # 工具调用总数上限（含 view_region / evaluate）
+MAX_TOOL_CALLS = 240    # 工具调用总数上限（含 set_region / view_region / evaluate）
 MAX_INVALID = 3         # 连续无效点击（越界/超范围/种子区域）
+# 不设总点击上限：同一区域最多设定 3 次（xor_world.MAX_SET_PER_REGION，含首次+2 次调整），
+# 点击总数自然被它和工具调用上限约束。原来"总点击 64 次"与"允许调整"相冲突：重复点击吃掉
+# 预算，64 次点击只覆盖 61 格就提前终止（见 context-log/2026-10-17_重复点击提前终止.md）。
 
 # 固定默认端口：避开 8123（Home Assistant 默认端口）等知名端口；被占时自动 fallback 随机。
 # Windows 端口复用坑：必须用 allow_reuse_address=False（见 context-log/2026-08-06_allow-reuse-address-port-reuse.md），
@@ -134,6 +135,7 @@ def build_system_prompt(seed_value, seed_index):
 - 区域 {seed_index}（种子区域）已固定为 {seed_value}，不可修改。
 - 请用 set_region 工具为其余 63 个区域逐一选择参数值（一次点击一个区域）。
 - 可随时用 view_region 查看某区域当前值与图案描述，用 evaluate 查看整幅画布的进度。
+- 每个非种子区域最多设定 3 次（含首次，即还能调整 2 次），用尽后该区域不再修改；调整会覆盖旧值。请把次数用在真正需要纠正的格子上。
 
 目标：
 - 把整幅画布当作你的作品来设计：先想清楚每块区域要什么图案，再选择能画出该图案的参数值。
@@ -141,7 +143,7 @@ def build_system_prompt(seed_value, seed_index):
 - 每个非种子区域都要被你点击设定过：未点击的区域默认纯黑、视为未处理。刻意选用 a=0（纯黑）作为图案是允许的，但要显式点击设定。
 - 建议先 evaluate 了解初始状态，再规划点击顺序。
 
-结束：当画布已足够好或点击次数将尽时，直接输出一段最终总结文字即可（不再调用工具）。"""
+结束：当画布已足够好或工具调用次数将尽时，直接输出一段最终总结文字即可（不再调用工具）。"""
 
 
 def get_api_key_or_none():
@@ -376,7 +378,6 @@ def parse_args():
     p.add_argument("--seed", type=int, default=0, help="种子区域值（默认 0）")
     p.add_argument("--seed-index", type=int, default=0, help="种子区域编号 0-63（默认 0）")
     p.add_argument("--rounds", type=int, default=MAX_LOOPS, help=f"最多循环次数（默认 {MAX_LOOPS}）")
-    p.add_argument("--clicks", type=int, default=MAX_CLICKS, help=f"最多点击次数（默认 {MAX_CLICKS}）")
     p.add_argument("--port", type=int, default=DEFAULT_PORT,
                    help=f"可视化端口，0=随机（默认固定 {DEFAULT_PORT}，被占时自动 fallback 随机）")
     p.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
@@ -437,7 +438,6 @@ def main():
     client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
     messages = [{"role": "system", "content": build_system_prompt(args.seed, args.seed_index)}]
 
-    click_count = 0
     tool_call_count = 0
     consecutive_invalid = 0
     reason = ""
@@ -499,11 +499,10 @@ def main():
                             reason = f"连续 {MAX_INVALID} 次无效点击"
                             break
                     else:
+                        # 不按点击数终止：单格上限（xor_world.MAX_SET_PER_REGION）与工具调用上限兜底。
+                        # 超上限的返回不带 Invalid 前缀（见 xor_world.set_region），不计入无效点击；
+                        # 成功点击数一律以 xor_world.state["clicks"] 为准（末尾统计），这里不另设计数器。
                         consecutive_invalid = 0
-                        click_count += 1
-                        if click_count >= args.clicks:
-                            reason = f"点击达到 {args.clicks} 次"
-                            break
 
                 if tool_call_count >= MAX_TOOL_CALLS:
                     reason = f"工具调用达到 {MAX_TOOL_CALLS} 次"
@@ -531,8 +530,10 @@ def main():
         f"已点击 {coverage}/63 个非种子区域。"
     )
     write_log(result_text, log_file)
+    click_count = len(xor_world.state["clicks"])  # 成功设定次数（含调整同一格的重复点击）
     write_log(
-        f"统计：循环 {loops} 次，工具调用 {tool_call_count} 次，成功点击 {click_count} 次。",
+        f"统计：循环 {loops} 次，工具调用 {tool_call_count} 次，成功点击 {click_count} 次"
+        f"（其中重复调整 {click_count - coverage} 次）。",
         log_file,
     )
     write_log(f"日志已保存: {log_file}，可视化 http://127.0.0.1:{port}/", log_file)
