@@ -59,3 +59,7 @@
 - 「经验」第 2 条（browser_use 子代理 + `browser_evaluate`）在 DSH 下不适用：DSH 无 browser_use 子代理；skill 已移到 `.agents/skills-pending/browser-ui-test/`，浏览器驱动步骤待重写。
 - 「经验」第 3 条（stdout 不回显）迁至 DSH 后待复核。
 - 「遗留」的 `sim_agent.py` 完整回放中断问题未定位，仍建议在正常终端复核，与本次迁移无关。
+
+## 补充说明（2026-10-17）
+
+- 上方“迁移说明”中， `AGENTS.md`原“操作原则”小节，于2026-10-17修改之后，放在“开发原则”小节里面，串行修改规则仍在，且补充对委托子代理并行改文件也适用。
